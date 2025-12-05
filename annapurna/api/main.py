@@ -8,7 +8,7 @@ import uuid
 
 from annapurna.config import settings
 from annapurna.models.base import get_db
-from annapurna.api import recipes, search, scraping, processing, tasks, cache_management, monitoring, feedback
+from annapurna.api import recipes, search, scraping, processing, tasks, cache_management, monitoring, feedback, recommendations, nutrition
 
 # Create FastAPI app
 app = FastAPI(
@@ -43,6 +43,8 @@ app.include_router(tasks.router, prefix=f"/{settings.api_version}/tasks", tags=[
 app.include_router(cache_management.router, prefix=f"/{settings.api_version}/cache", tags=["Cache Management"])
 app.include_router(monitoring.router, prefix=f"/{settings.api_version}/monitoring", tags=["Monitoring"])
 app.include_router(feedback.router, prefix=f"/{settings.api_version}/feedback", tags=["Feedback"])
+app.include_router(recommendations.router, prefix=f"/{settings.api_version}/recommendations", tags=["Recommendations"])
+app.include_router(nutrition.router, prefix=f"/{settings.api_version}/nutrition", tags=["Nutrition"])
 
 
 if __name__ == "__main__":
