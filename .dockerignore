@@ -1,0 +1,70 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info
+dist
+build
+.venv
+venv
+env
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*.swn
+.DS_Store
+
+# Testing
+.pytest_cache
+.coverage
+htmlcov
+.tox
+
+# Documentation
+*.md
+!README.md
+docs/
+
+# Docker
+Dockerfile
+docker-compose*.yml
+.dockerignore
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+logs/
+
+# Alembic (keep the migrations folder but exclude local stuff)
+alembic.ini
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# Database
+*.db
+*.sqlite3
+
+# CI/CD
+.github
+.gitlab-ci.yml
+
+# Misc
+.cache
+tmp/
+temp/

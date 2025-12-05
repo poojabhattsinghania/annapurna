@@ -17,7 +17,7 @@ A high-fidelity, semantic search-powered recipe database for Indian cuisine with
 - **Database**: PostgreSQL 15+ with pgvector extension
 - **ORM**: SQLAlchemy 2.0
 - **Migrations**: Alembic
-- **LLM**: Google Gemini 1.5 Flash (primary), OpenAI GPT-4o-mini (fallback)
+- **LLM**: Google Gemini 2.0 Flash (primary), OpenAI GPT-4o-mini (fallback)
 - **Embeddings**: sentence-transformers (all-MiniLM-L6-v2)
 - **Task Queue**: Celery with Redis
 - **Scraping**: youtube-transcript-api, recipe-scrapers, BeautifulSoup
@@ -42,13 +42,37 @@ annapurna/
 
 ## Setup
 
-### Prerequisites
+### Option 1: Docker (Recommended)
+
+The easiest way to run Project Annapurna locally:
+
+```bash
+# Copy environment file and add your Google API key
+cp .env.example .env
+
+# Start all services (PostgreSQL, Redis, API, Celery, Flower)
+docker-compose up -d
+
+# Create database tables
+docker-compose exec api alembic upgrade head
+
+# Seed initial data
+docker-compose exec api python -m annapurna.utils.seed_database
+
+# Access API at http://localhost:8000/v1/docs
+```
+
+See [DOCKER.md](./DOCKER.md) for detailed Docker documentation.
+
+### Option 2: Manual Installation
+
+#### Prerequisites
 
 - Python 3.11+
 - PostgreSQL 15+ with pgvector extension
 - Redis (for Celery)
 
-### Installation
+#### Installation
 
 1. Clone the repository:
 ```bash
@@ -189,7 +213,7 @@ pytest
 - [x] Seed data for taxonomy (tag dimensions, ingredients, creators)
 - [x] YouTube scraping module (videos + playlists)
 - [x] Website scraping module (Schema.org + recipe-scrapers)
-- [x] LLM normalization pipeline (Gemini 1.5 Flash)
+- [x] LLM normalization pipeline (Gemini 2.0 Flash)
 - [x] Duplicate detection & clustering
 - [x] FastAPI endpoints (search, recipes, scraping, processing)
 - [x] Vector search implementation (384-dim embeddings)

@@ -246,7 +246,7 @@ class RecipeProcessor:
                 total_time_minutes=recipe_data.get('total_time') or time_estimates.get('total_time_minutes'),
                 servings=recipe_data.get('servings'),
                 processed_at=datetime.utcnow(),
-                llm_model_version='gemini-1.5-flash'
+                llm_model_version='gemini-2.0-flash-exp'
             )
 
             self.db_session.add(recipe)

@@ -172,7 +172,7 @@ def track_llm_request(model: str, operation: str):
     Decorator to track LLM API requests
 
     Example:
-        @track_llm_request('gemini-1.5-flash', 'ingredient_parsing')
+        @track_llm_request('gemini-2.0-flash-exp', 'ingredient_parsing')
         def parse_ingredients(text):
             ...
     """

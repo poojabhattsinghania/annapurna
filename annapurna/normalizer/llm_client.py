@@ -13,7 +13,7 @@ class LLMClient:
     def __init__(self):
         # Configure Gemini
         genai.configure(api_key=settings.gemini_api_key)
-        self.gemini_model = genai.GenerativeModel('gemini-1.5-flash')
+        self.gemini_model = genai.GenerativeModel('gemini-2.0-flash-exp')
 
         # Configure OpenAI (if available)
         self.openai_client = None

@@ -1,0 +1,139 @@
+version: '3.8'
+
+services:
+  # PostgreSQL with pgvector extension
+  postgres:
+    image: ankane/pgvector:latest
+    container_name: annapurna-postgres
+    environment:
+      POSTGRES_DB: annapurna
+      POSTGRES_USER: annapurna
+      POSTGRES_PASSWORD: annapurna_dev_password
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U annapurna -d annapurna"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - annapurna-network
+
+  # Redis for caching and Celery
+  redis:
+    image: redis:7-alpine
+    container_name: annapurna-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - annapurna-network
+
+  # FastAPI application
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: annapurna-api
+    environment:
+      - DATABASE_URL=postgresql://annapurna:annapurna_dev_password@postgres:5432/annapurna
+      - REDIS_URL=redis://redis:6379/0
+      - ENVIRONMENT=development
+      - API_VERSION=v1
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+      - /app/.venv  # Prevent overwriting container venv with host
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: uvicorn annapurna.api.main:app --host 0.0.0.0 --port 8000 --reload
+    networks:
+      - annapurna-network
+
+  # Celery worker for async tasks
+  celery-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: annapurna-celery-worker
+    environment:
+      - DATABASE_URL=postgresql://annapurna:annapurna_dev_password@postgres:5432/annapurna
+      - REDIS_URL=redis://redis:6379/0
+      - ENVIRONMENT=development
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+    volumes:
+      - .:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: celery -A annapurna.celery_app worker --loglevel=info --concurrency=4
+    networks:
+      - annapurna-network
+
+  # Celery beat for scheduled tasks
+  celery-beat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: annapurna-celery-beat
+    environment:
+      - DATABASE_URL=postgresql://annapurna:annapurna_dev_password@postgres:5432/annapurna
+      - REDIS_URL=redis://redis:6379/0
+      - ENVIRONMENT=development
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+    volumes:
+      - .:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: celery -A annapurna.celery_app beat --loglevel=info
+    networks:
+      - annapurna-network
+
+  # Flower for Celery monitoring
+  flower:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: annapurna-flower
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+    ports:
+      - "5555:5555"
+    depends_on:
+      redis:
+        condition: service_healthy
+    command: celery -A annapurna.celery_app flower --port=5555
+    networks:
+      - annapurna-network
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  annapurna-network:
+    driver: bridge
