@@ -183,16 +183,33 @@ pytest
 
 ## Development Roadmap
 
+### ✅ Phase 1: Core Features (Complete)
 - [x] Project structure and configuration
-- [x] Database schema design
-- [x] Seed data for taxonomy
-- [ ] YouTube scraping module
-- [ ] Website scraping module
-- [ ] LLM normalization pipeline
-- [ ] Duplicate detection & clustering
-- [ ] FastAPI endpoints
-- [ ] Vector search implementation
-- [ ] Rule engine for dietary logic gates
+- [x] Database schema design (13 tables with pgvector)
+- [x] Seed data for taxonomy (tag dimensions, ingredients, creators)
+- [x] YouTube scraping module (videos + playlists)
+- [x] Website scraping module (Schema.org + recipe-scrapers)
+- [x] LLM normalization pipeline (Gemini 1.5 Flash)
+- [x] Duplicate detection & clustering
+- [x] FastAPI endpoints (search, recipes, scraping, processing)
+- [x] Vector search implementation (384-dim embeddings)
+- [x] Rule engine for dietary logic gates (Jain, Vrat, etc.)
+
+### 🚧 Phase 2: Scaling (In Progress)
+- [ ] Celery task queue for async processing
+- [ ] Redis caching for frequent searches
+- [ ] Monitoring & logging (Prometheus/Grafana)
+- [ ] Rate limiting and API throttling
+- [ ] Batch scraping orchestration
+- [ ] Database connection pooling optimization
+
+### 🔮 Phase 3: Advanced Features (Planned)
+- [ ] User feedback system (ratings, corrections)
+- [ ] Meal planning recommendations
+- [ ] Nutrition calculator (detailed macros)
+- [ ] Image recognition for ingredients
+- [ ] Mobile app API enhancements
+- [ ] Multi-language support (beyond Hindi/English)
 
 ## Contributing
 

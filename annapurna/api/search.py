@@ -11,6 +11,7 @@ from annapurna.models.content import ContentCreator
 from annapurna.models.taxonomy import TagDimension
 from annapurna.api.schemas import SearchRequest, SearchResponse, SearchResult, RecipeSummary
 from annapurna.utils.embeddings import EmbeddingGenerator
+from annapurna.utils.cache import cached, cache
 
 router = APIRouter()
 
@@ -167,6 +168,7 @@ class HybridSearch:
 
         return scored_results, total
 
+    @cached('search_hybrid', ttl=1800)  # Cache for 30 minutes
     def hybrid_search(self, query_text: str, filters, limit: int, offset: int):
         """
         Hybrid search: Semantic search + SQL filters
