@@ -1,9 +1,9 @@
 version: '3.8'
 
 services:
-  # PostgreSQL with pgvector extension
+  # PostgreSQL for structured data
   postgres:
-    image: ankane/pgvector:latest
+    image: postgres:15-alpine
     container_name: annapurna-postgres
     environment:
       POSTGRES_DB: annapurna
@@ -14,9 +14,25 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U annapurna -d annapurna"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - annapurna-network
+
+  # Qdrant vector database
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: annapurna-qdrant
+    ports:
+      - "6333:6333"  # REST API
+      - "6334:6334"  # gRPC API
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/health"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -49,6 +65,7 @@ services:
     environment:
       - DATABASE_URL=postgresql://annapurna:annapurna_dev_password@postgres:5432/annapurna
       - REDIS_URL=redis://redis:6379/0
+      - QDRANT_URL=http://qdrant:6333
       - ENVIRONMENT=development
       - API_VERSION=v1
       - GOOGLE_API_KEY=${GOOGLE_API_KEY}
@@ -63,6 +80,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      qdrant:
+        condition: service_healthy
     command: uvicorn annapurna.api.main:app --host 0.0.0.0 --port 8000 --reload
     networks:
       - annapurna-network
@@ -76,6 +95,7 @@ services:
     environment:
       - DATABASE_URL=postgresql://annapurna:annapurna_dev_password@postgres:5432/annapurna
       - REDIS_URL=redis://redis:6379/0
+      - QDRANT_URL=http://qdrant:6333
       - ENVIRONMENT=development
       - GOOGLE_API_KEY=${GOOGLE_API_KEY}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
@@ -85,6 +105,8 @@ services:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      qdrant:
         condition: service_healthy
     command: celery -A annapurna.celery_app worker --loglevel=info --concurrency=4
     networks:
@@ -99,6 +121,7 @@ services:
     environment:
       - DATABASE_URL=postgresql://annapurna:annapurna_dev_password@postgres:5432/annapurna
       - REDIS_URL=redis://redis:6379/0
+      - QDRANT_URL=http://qdrant:6333
       - ENVIRONMENT=development
       - GOOGLE_API_KEY=${GOOGLE_API_KEY}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
@@ -108,6 +131,8 @@ services:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      qdrant:
         condition: service_healthy
     command: celery -A annapurna.celery_app beat --loglevel=info
     networks:
@@ -133,6 +158,7 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  qdrant_data:
 
 networks:
   annapurna-network:

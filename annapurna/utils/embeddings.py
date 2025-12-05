@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from annapurna.models.recipe import Recipe, RecipeIngredient
 from annapurna.models.taxonomy import IngredientMaster
 from annapurna.config import settings
+from annapurna.utils.qdrant_client import get_qdrant_client
 
 
 class EmbeddingGenerator:
@@ -84,7 +85,7 @@ class EmbeddingGenerator:
         db_session: Session
     ) -> bool:
         """
-        Generate and store embedding for a recipe
+        Generate and store embedding for a recipe in Qdrant
 
         Args:
             recipe: Recipe object
@@ -104,16 +105,28 @@ class EmbeddingGenerator:
             # Generate embedding
             embedding = self.generate_embedding(recipe_text)
 
-            # Store in recipe
-            recipe.embedding = embedding.tolist()  # Convert numpy array to list for pgvector
+            # Store in Qdrant with metadata
+            qdrant = get_qdrant_client()
+            metadata = {
+                "title": recipe.title,
+                "source_url": recipe.source_url,
+                "creator_id": str(recipe.creator_id) if recipe.creator_id else None
+            }
 
-            db_session.commit()
+            success = qdrant.upsert_embedding(
+                recipe_id=str(recipe.id),
+                embedding=embedding.tolist(),
+                metadata=metadata
+            )
 
-            print(f"✓ Generated embedding for: {recipe.title}")
-            return True
+            if success:
+                print(f"✓ Generated embedding for: {recipe.title}")
+                return True
+            else:
+                print(f"✗ Failed to store embedding for: {recipe.title}")
+                return False
 
         except Exception as e:
-            db_session.rollback()
             print(f"✗ Error generating embedding for {recipe.id}: {str(e)}")
             return False
 
@@ -124,23 +137,18 @@ class EmbeddingGenerator:
         recompute: bool = False
     ) -> dict:
         """
-        Generate embeddings for multiple recipes in batch
+        Generate embeddings for multiple recipes in batch and store in Qdrant
 
         Args:
             db_session: Database session
             batch_size: Number of recipes to process
-            recompute: If True, regenerate embeddings even if they exist
+            recompute: If True, regenerate embeddings even if they exist in Qdrant
 
         Returns:
             {"success": X, "failed": Y, "skipped": Z}
         """
-        # Get recipes without embeddings (or all if recompute)
-        if recompute:
-            recipes = db_session.query(Recipe).limit(batch_size).all()
-        else:
-            recipes = db_session.query(Recipe).filter(
-                Recipe.embedding.is_(None)
-            ).limit(batch_size).all()
+        # Get all recipes (Qdrant will handle upsert for existing ones)
+        recipes = db_session.query(Recipe).limit(batch_size).all()
 
         if not recipes:
             print("No recipes to process")
@@ -150,9 +158,15 @@ class EmbeddingGenerator:
 
         # Create text representations in batch
         recipe_texts = []
+        recipe_metadata = []
         for recipe in recipes:
             text = self.create_recipe_text(recipe, db_session)
             recipe_texts.append(text)
+            recipe_metadata.append({
+                "title": recipe.title,
+                "source_url": recipe.source_url,
+                "creator_id": str(recipe.creator_id) if recipe.creator_id else None
+            })
 
         # Generate embeddings in batch (more efficient)
         print("Encoding batch...")
@@ -163,19 +177,21 @@ class EmbeddingGenerator:
             convert_to_numpy=True
         )
 
-        # Store embeddings
-        results = {"success": 0, "failed": 0, "skipped": 0}
+        # Prepare batch data for Qdrant
+        qdrant_data = [
+            (str(recipe.id), embedding.tolist(), metadata)
+            for recipe, embedding, metadata in zip(recipes, embeddings, recipe_metadata)
+        ]
 
-        for recipe, embedding in zip(recipes, embeddings):
-            try:
-                recipe.embedding = embedding.tolist()
-                results["success"] += 1
-            except Exception as e:
-                print(f"Error storing embedding for {recipe.id}: {str(e)}")
-                results["failed"] += 1
+        # Store embeddings in Qdrant
+        qdrant = get_qdrant_client()
+        success_count = qdrant.batch_upsert_embeddings(qdrant_data)
 
-        # Commit all changes
-        db_session.commit()
+        results = {
+            "success": success_count,
+            "failed": len(recipes) - success_count,
+            "skipped": 0
+        }
 
         print("\n" + "=" * 50)
         print(f"Embedding generation complete!")
@@ -193,7 +209,7 @@ class EmbeddingGenerator:
         threshold: float = 0.5
     ) -> List[tuple]:
         """
-        Find similar recipes using semantic search
+        Find similar recipes using semantic search with Qdrant
 
         Args:
             query_text: Search query (natural language)
@@ -207,24 +223,29 @@ class EmbeddingGenerator:
         # Generate query embedding
         query_embedding = self.generate_embedding(query_text)
 
-        # Search using pgvector cosine similarity
-        # Note: <=> is cosine distance, so similarity = 1 - distance
-        results = db_session.query(
-            Recipe,
-            (1 - Recipe.embedding.cosine_distance(query_embedding)).label('similarity')
-        ).filter(
-            Recipe.embedding.isnot(None)
-        ).order_by(
-            Recipe.embedding.cosine_distance(query_embedding)
-        ).limit(limit * 2).all()  # Get extra to filter by threshold
+        # Search in Qdrant
+        qdrant = get_qdrant_client()
+        qdrant_results = qdrant.search_similar(
+            query_embedding=query_embedding.tolist(),
+            limit=limit,
+            score_threshold=threshold
+        )
 
-        # Filter by threshold
-        filtered = [
-            (recipe, float(sim)) for recipe, sim in results
-            if float(sim) >= threshold
-        ][:limit]
+        # Fetch recipes from database using recipe_ids from Qdrant
+        results = []
+        for result in qdrant_results:
+            recipe_id = result["recipe_id"]
+            score = result["score"]
 
-        return filtered
+            # Fetch recipe from database
+            recipe = db_session.query(Recipe).filter_by(
+                id=uuid.UUID(recipe_id)
+            ).first()
+
+            if recipe:
+                results.append((recipe, score))
+
+        return results
 
     def compute_similarity_matrix(
         self,
@@ -243,15 +264,19 @@ class EmbeddingGenerator:
         """
         from sklearn.metrics.pairwise import cosine_similarity
 
-        # Get embeddings
+        # Get embeddings from Qdrant
+        qdrant = get_qdrant_client()
         embeddings = []
+
         for recipe in recipes:
-            if recipe.embedding:
-                embeddings.append(recipe.embedding)
+            embedding = qdrant.get_embedding(str(recipe.id))
+            if embedding:
+                embeddings.append(embedding)
             else:
                 # Generate embedding if missing
                 self.add_embedding_to_recipe(recipe, db_session)
-                embeddings.append(recipe.embedding)
+                embedding = qdrant.get_embedding(str(recipe.id))
+                embeddings.append(embedding if embedding else [0.0] * self.embedding_dim)
 
         embeddings_array = np.array(embeddings)
 

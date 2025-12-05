@@ -174,44 +174,50 @@ class HybridSearch:
         Hybrid search: Semantic search + SQL filters
 
         Strategy:
-        1. Use semantic search for relevance
-        2. Apply hard SQL filters (Jain, time limits, etc.)
+        1. Use Qdrant for semantic search
+        2. Apply hard SQL filters to the results
         3. Combine and rank results
         """
         self._init_embedding_generator()
+        from annapurna.utils.qdrant_client import get_qdrant_client
 
-        # Get semantic candidates
+        # Get semantic candidates from Qdrant (get more than limit for filtering)
+        query_embedding = self.embedding_gen.generate_embedding(query_text)
+        qdrant = get_qdrant_client()
+
+        # Search with larger limit to account for filters
+        qdrant_results = qdrant.search_similar(
+            query_embedding=query_embedding.tolist(),
+            limit=limit * 5,  # Get 5x more to allow for filtering
+            score_threshold=0.3
+        )
+
+        if not qdrant_results:
+            return [], 0
+
+        # Get recipe IDs from Qdrant results
+        recipe_ids = [result["recipe_id"] for result in qdrant_results]
+
+        # Fetch recipes from database and apply SQL filters
+        import uuid
         query = self.db.query(Recipe).filter(
-            Recipe.embedding.isnot(None)
+            Recipe.id.in_([uuid.UUID(rid) for rid in recipe_ids])
         )
 
         # Apply SQL filters
         query = self.apply_sql_filters(query, filters)
-
-        # Get filtered recipes
         filtered_recipes = query.all()
 
-        # Compute semantic scores for filtered recipes
-        if not filtered_recipes:
-            return [], 0
+        # Map recipe_id to score from Qdrant
+        score_map = {result["recipe_id"]: result["score"] for result in qdrant_results}
 
-        query_embedding = self.embedding_gen.generate_embedding(query_text)
-
+        # Create scored results with recipes that passed filters
         scored_results = []
         for recipe in filtered_recipes:
-            # Compute cosine similarity
-            if recipe.embedding:
-                import numpy as np
-                from sklearn.metrics.pairwise import cosine_similarity
+            score = score_map.get(str(recipe.id), 0.0)
+            scored_results.append((recipe, score))
 
-                recipe_emb = np.array(recipe.embedding).reshape(1, -1)
-                query_emb = np.array(query_embedding).reshape(1, -1)
-                score = cosine_similarity(query_emb, recipe_emb)[0][0]
-
-                if score >= 0.3:  # Threshold
-                    scored_results.append((recipe, float(score)))
-
-        # Sort by score
+        # Sort by score (already sorted from Qdrant, but ensure order)
         scored_results.sort(key=lambda x: x[1], reverse=True)
 
         # Paginate

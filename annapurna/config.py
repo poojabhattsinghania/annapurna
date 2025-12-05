@@ -16,7 +16,8 @@ class Settings(BaseSettings):
     database_password: str
 
     # LLM APIs
-    gemini_api_key: str
+    google_api_key: str  # For Gemini
+    gemini_api_key: Optional[str] = None  # Alias for backwards compatibility
     openai_api_key: Optional[str] = None
 
     # Embedding Model
@@ -24,6 +25,15 @@ class Settings(BaseSettings):
 
     # Redis
     redis_url: str = "redis://localhost:6379/0"
+
+    # Qdrant Vector Database
+    qdrant_url: str = "http://localhost:6333"
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        # Use google_api_key as gemini_api_key if not explicitly set
+        if not self.gemini_api_key and self.google_api_key:
+            self.gemini_api_key = self.google_api_key
 
     # Application
     environment: str = "development"

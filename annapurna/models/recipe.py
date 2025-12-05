@@ -5,7 +5,6 @@ from datetime import datetime
 from sqlalchemy import Column, String, Text, Integer, Float, DateTime, ForeignKey, Boolean, Enum
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
-from pgvector.sqlalchemy import Vector
 from annapurna.models.base import Base
 import enum
 
@@ -80,8 +79,8 @@ class Recipe(Base):
     carbs_grams = Column(Float)
     fat_grams = Column(Float)
 
-    # Vector embedding for semantic search (384 dimensions for all-MiniLM-L6-v2)
-    embedding = Column(Vector(384))
+    # Note: Vector embeddings are stored in Qdrant, not PostgreSQL
+    # Link recipes to Qdrant using recipe.id
 
     # Processing metadata
     processed_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)

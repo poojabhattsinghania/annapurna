@@ -127,35 +127,53 @@ class RecipeClustering:
         threshold: float = None
     ) -> List[Tuple[Recipe, float]]:
         """
-        Find recipes with similar embeddings using cosine similarity
+        Find recipes with similar embeddings using cosine similarity via Qdrant
 
         Note: Requires embeddings to be generated first
 
         Returns:
             List of (recipe, similarity_score) tuples
         """
+        from annapurna.utils.qdrant_client import get_qdrant_client
+        import uuid
+
         if threshold is None:
             threshold = self.embedding_threshold
 
-        if recipe.embedding is None:
-            print("Recipe has no embedding, skipping embedding similarity")
+        # Get embedding from Qdrant
+        qdrant = get_qdrant_client()
+        recipe_embedding = qdrant.get_embedding(str(recipe.id))
+
+        if not recipe_embedding:
+            print("Recipe has no embedding in Qdrant, skipping embedding similarity")
             return []
 
-        # Use pgvector's cosine similarity operator
-        # <=> is the cosine distance operator (1 - cosine similarity)
-        similar_recipes = self.db_session.query(
-            Recipe,
-            (1 - Recipe.embedding.cosine_distance(recipe.embedding)).label('similarity')
-        ).filter(
-            Recipe.id != recipe.id,
-            Recipe.embedding.isnot(None)
-        ).all()
+        # Search for similar embeddings in Qdrant
+        qdrant_results = qdrant.search_similar(
+            query_embedding=recipe_embedding,
+            limit=100,  # Get top 100 similar
+            score_threshold=threshold
+        )
 
-        # Filter by threshold and sort
-        similar = [
-            (r, sim) for r, sim in similar_recipes
-            if sim >= threshold
-        ]
+        # Fetch recipes from database
+        similar = []
+        for result in qdrant_results:
+            recipe_id = result["recipe_id"]
+            score = result["score"]
+
+            # Skip self
+            if recipe_id == str(recipe.id):
+                continue
+
+            # Fetch recipe
+            similar_recipe = self.db_session.query(Recipe).filter_by(
+                id=uuid.UUID(recipe_id)
+            ).first()
+
+            if similar_recipe:
+                similar.append((similar_recipe, score))
+
+        # Already sorted by Qdrant, but ensure
         similar.sort(key=lambda x: x[1], reverse=True)
 
         return similar
