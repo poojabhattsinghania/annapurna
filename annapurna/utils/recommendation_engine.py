@@ -107,7 +107,7 @@ class RecommendationEngine:
 
         # Check excluded ingredients
         if profile.excluded_ingredients:
-            from annapurna.models.ingredient import RecipeIngredient
+            from annapurna.models.recipe import RecipeIngredient
             recipe_ingredients = self.db.query(RecipeIngredient).filter_by(
                 recipe_id=recipe.id
             ).all()

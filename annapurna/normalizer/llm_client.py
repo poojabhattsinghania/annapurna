@@ -13,7 +13,11 @@ class LLMClient:
     def __init__(self):
         # Configure Gemini
         genai.configure(api_key=settings.gemini_api_key)
-        self.gemini_model = genai.GenerativeModel('gemini-2.0-flash-exp')
+
+        # Initialize multiple model instances for cost optimization
+        self.gemini_lite = genai.GenerativeModel(settings.gemini_model_lite)  # Cheapest for simple tasks
+        self.gemini_standard = genai.GenerativeModel(settings.gemini_model_default)  # Workhorse
+        self.gemini_model = self.gemini_standard  # Default for backwards compatibility
 
         # Configure OpenAI (if available)
         self.openai_client = None
@@ -40,7 +44,14 @@ class LLMClient:
                 generation_config=generation_config
             )
 
-            return response.text
+            # Handle both simple text and structured responses
+            try:
+                return response.text
+            except ValueError:
+                # For structured responses, extract text from parts
+                if response.candidates and response.candidates[0].content.parts:
+                    return ''.join(part.text for part in response.candidates[0].content.parts if hasattr(part, 'text'))
+                return None
 
         except Exception as e:
             print(f"Gemini API error: {str(e)}")
@@ -105,6 +116,54 @@ class LLMClient:
 
         return result
 
+    def generate_lite(
+        self,
+        prompt: str,
+        temperature: float = 0.2,
+        max_tokens: int = 1024
+    ) -> Optional[str]:
+        """
+        Generate text using Gemini Flash-Lite (cheapest model)
+
+        Use for simple structured tasks:
+        - Ingredient parsing
+        - Instruction parsing
+        - JSON extraction
+
+        Args:
+            prompt: The prompt to send
+            temperature: Sampling temperature (default: 0.2 for deterministic)
+            max_tokens: Maximum tokens (default: 1024, sufficient for structured tasks)
+
+        Returns:
+            Generated text or None if failed
+        """
+        try:
+            generation_config = genai.types.GenerationConfig(
+                temperature=temperature,
+                max_output_tokens=max_tokens,
+            )
+
+            response = self.gemini_lite.generate_content(
+                prompt,
+                generation_config=generation_config
+            )
+
+            # Handle both simple text and structured responses
+            try:
+                return response.text
+            except ValueError:
+                # For structured responses, extract text from parts
+                if response.candidates and response.candidates[0].content.parts:
+                    return ''.join(part.text for part in response.candidates[0].content.parts if hasattr(part, 'text'))
+                return None
+
+        except Exception as e:
+            print(f"Gemini Lite error: {str(e)}")
+            # Fallback to standard model
+            print("Falling back to standard Gemini model...")
+            return self.generate_with_gemini(prompt, temperature, max_tokens)
+
     def generate_json(
         self,
         prompt: str,
@@ -151,4 +210,49 @@ class LLMClient:
                     pass
 
         print(f"Failed to parse JSON from LLM response: {response[:200]}...")
+        return None
+
+    def generate_json_lite(
+        self,
+        prompt: str,
+        temperature: float = 0.2,
+        max_tokens: int = 1024
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Generate JSON using Gemini Flash-Lite (cheapest model)
+
+        Perfect for structured parsing tasks like ingredients and instructions.
+
+        Returns:
+            Parsed JSON dict or None if parsing fails
+        """
+        json_prompt = f"{prompt}\n\nIMPORTANT: Return ONLY valid JSON, no additional text."
+
+        response = self.generate_lite(json_prompt, temperature, max_tokens)
+
+        if not response:
+            return None
+
+        # Try to extract JSON from response
+        try:
+            return json.loads(response)
+        except json.JSONDecodeError:
+            # Try to find JSON in the response
+            import re
+            json_match = re.search(r'\{.*\}', response, re.DOTALL)
+            if json_match:
+                try:
+                    return json.loads(json_match.group())
+                except json.JSONDecodeError:
+                    pass
+
+            # Try array format
+            json_match = re.search(r'\[.*\]', response, re.DOTALL)
+            if json_match:
+                try:
+                    return json.loads(json_match.group())
+                except json.JSONDecodeError:
+                    pass
+
+        print(f"Failed to parse JSON from Lite response: {response[:200]}...")
         return None

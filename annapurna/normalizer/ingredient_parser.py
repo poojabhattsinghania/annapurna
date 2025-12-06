@@ -68,7 +68,8 @@ Ingredient text:
 Return ONLY a valid JSON array, no additional text.
 """
 
-        result = self.llm.generate_json(prompt, temperature=0.2)
+        # Use cheaper Flash-Lite model for structured parsing (cost optimization)
+        result = self.llm.generate_json_lite(prompt, temperature=0.2)
 
         if not result:
             print("LLM failed to parse ingredients")

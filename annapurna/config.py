@@ -20,6 +20,11 @@ class Settings(BaseSettings):
     gemini_api_key: Optional[str] = None  # Alias for backwards compatibility
     openai_api_key: Optional[str] = None
 
+    # LLM Model Selection
+    gemini_model_lite: str = "gemini-2.0-flash-8b"  # For simple structured tasks (cheapest - 8B params)
+    gemini_model_default: str = "gemini-2.0-flash"  # For complex reasoning (workhorse)
+    gemini_model_complex: str = "gemini-2.0-flash"  # For most complex tasks
+
     # Embedding Model
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
 

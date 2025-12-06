@@ -1,10 +1,11 @@
 """Complete recipe processing pipeline from raw data to structured recipe"""
 
+import re
 import uuid
 from datetime import datetime
-from typing import Optional, Dict
+from typing import Optional, Dict, List
 from sqlalchemy.orm import Session
-from python_slugify import slugify
+from slugify import slugify
 
 from annapurna.normalizer.ingredient_parser import IngredientParser
 from annapurna.normalizer.instruction_parser import InstructionParser
@@ -68,6 +69,20 @@ class RecipeProcessor:
 
     def _extract_from_website(self, raw_content: RawScrapedContent, metadata: Dict) -> Dict:
         """Extract recipe data from website"""
+        # Validate HTML content (detect binary/corrupted data)
+        if raw_content.raw_html:
+            # Check if HTML starts with binary markers (JFIF for JPEG, PNG signature, etc.)
+            html_preview = raw_content.raw_html[:20] if raw_content.raw_html else ""
+            # Convert to bytes if string
+            if isinstance(html_preview, str):
+                html_start = html_preview.encode('latin-1', errors='ignore')
+            else:
+                html_start = html_preview
+
+            if any(marker in html_start for marker in [b'JFIF', b'\x89PNG', b'GIF89', b'GIF87', b'\xff\xd8\xff']):
+                print(f"⚠️  Invalid HTML (binary image data) - skipping: {raw_content.source_url}")
+                return {}
+
         # Prefer Schema.org data (most reliable)
         if 'schema_org' in metadata:
             schema = metadata['schema_org']
@@ -81,7 +96,11 @@ class RecipeProcessor:
                 'total_time': self._parse_duration(schema.get('totalTime')),
                 'servings': self._parse_servings(schema.get('recipeYield')),
                 'source_type': 'website',
-                'author': schema.get('author', {}).get('name') if isinstance(schema.get('author'), dict) else schema.get('author')
+                'author': schema.get('author', {}).get('name') if isinstance(schema.get('author'), dict) else schema.get('author'),
+                # NEW: Include raw schema.org data for quality-aware processing
+                'has_schema_org': True,
+                'schema_ingredients': schema.get('recipeIngredient', []),
+                'schema_instructions': schema.get('recipeInstructions', [])
             }
 
         # Fallback to recipe-scrapers data
@@ -161,6 +180,157 @@ class RecipeProcessor:
 
         return None
 
+    def _parse_schema_org_ingredient(self, ingredient_str: str) -> Optional[Dict]:
+        """
+        Parse schema.org ingredient string without LLM (high quality data)
+
+        Example: "200 grams paneer, cubed" → {quantity: 200, unit: "grams", item: "paneer"}
+        """
+        # Common patterns for ingredients
+        # Pattern 1: "200 grams paneer, cubed"
+        # Pattern 2: "2 tablespoons butter"
+        # Pattern 3: "½ cup water"
+        # Pattern 4: "15 cashews (- whole)"
+
+        # Clean up the string
+        ingredient_str = ingredient_str.strip()
+
+        # Extract quantity (number, fraction, or mixed)
+        quantity_pattern = r'^([\d½¼¾⅓⅔⅛⅜⅝⅞]+(?:\s*[-/]\s*[\d]+)?|\d+\.\d+)'
+        quantity_match = re.search(quantity_pattern, ingredient_str)
+
+        quantity = None
+        if quantity_match:
+            qty_str = quantity_match.group(1)
+            # Convert fractions to decimals
+            if '½' in qty_str:
+                quantity = 0.5
+            elif '¼' in qty_str:
+                quantity = 0.25
+            elif '¾' in qty_str:
+                quantity = 0.75
+            elif '⅓' in qty_str:
+                quantity = 0.33
+            elif '⅔' in qty_str:
+                quantity = 0.67
+            else:
+                try:
+                    quantity = float(qty_str)
+                except:
+                    pass
+
+        # Extract unit (grams, cups, tablespoons, etc.)
+        unit_pattern = r'\b(gram|grams|g|kg|kilogram|cup|cups|tablespoon|tablespoons|tbsp|teaspoon|teaspoons|tsp|ml|liter|liters|piece|pieces|pinch|whole|medium|large|small)\b'
+        unit_match = re.search(unit_pattern, ingredient_str, re.IGNORECASE)
+        unit = unit_match.group(1).lower() if unit_match else None
+
+        # Extract ingredient name (everything before comma or parenthesis, after quantity and unit)
+        # Remove quantity and unit from string
+        remaining = ingredient_str
+        if quantity_match:
+            remaining = remaining[quantity_match.end():].strip()
+        if unit_match:
+            remaining = remaining[unit_match.end():].strip()
+
+        # Remove parentheticals and anything after comma
+        item = re.split(r'[,(]', remaining)[0].strip()
+
+        if not item:
+            return None
+
+        return {
+            'item': item.title(),  # Capitalize ingredient name
+            'quantity': quantity,
+            'unit': unit,
+            'original_text': ingredient_str
+        }
+
+    def _parse_schema_org_ingredients(self, ingredients_list: List[str]) -> List[Dict]:
+        """
+        Parse schema.org ingredients without LLM - high quality structured data
+
+        Returns normalized ingredients compatible with existing flow
+        """
+        normalized_ingredients = []
+
+        for ingredient_str in ingredients_list:
+            # Parse the ingredient
+            parsed = self._parse_schema_org_ingredient(ingredient_str)
+
+            if not parsed:
+                continue
+
+            # Match to ingredient master list
+            matched = self.ingredient_parser.fuzzy_match_ingredient(parsed['item'])
+
+            if matched:
+                normalized_ingredients.append({
+                    'ingredient_id': str(matched.id),
+                    'standard_name': matched.standard_name,
+                    'quantity': parsed['quantity'],
+                    'unit': parsed['unit'],
+                    'original_text': parsed['original_text'],
+                    'confidence': 0.99  # Schema.org data is high quality
+                })
+            else:
+                print(f"Schema.org: Could not match ingredient '{parsed['item']}' to master list")
+
+        return normalized_ingredients
+
+    def _parse_schema_org_instructions(self, schema_instructions: List) -> List[Dict]:
+        """
+        Parse schema.org instructions without LLM - already perfect structured data
+
+        Schema.org format:
+        [
+          {"@type": "HowToStep", "text": "First soak the cashews...", "name": "..."},
+          ...
+        ]
+
+        Returns: Same format as LLM instruction parser
+        """
+        parsed_instructions = []
+        step_num = 1
+
+        for section in schema_instructions:
+            # Handle HowToSection (contains multiple steps)
+            if isinstance(section, dict) and section.get('@type') == 'HowToSection':
+                items = section.get('itemListElement', [])
+                for item in items:
+                    if item.get('@type') == 'HowToStep':
+                        text = item.get('text', item.get('name', '')).strip()
+                        if text:
+                            parsed_instructions.append({
+                                'step_number': step_num,
+                                'instruction': text,
+                                'estimated_time_minutes': None  # Schema.org doesn't typically have per-step timing
+                            })
+                            step_num += 1
+
+            # Handle direct HowToStep
+            elif isinstance(section, dict) and section.get('@type') == 'HowToStep':
+                text = section.get('text', section.get('name', '')).strip()
+                if text:
+                    parsed_instructions.append({
+                        'step_number': step_num,
+                        'instruction': text,
+                        'estimated_time_minutes': None
+                    })
+                    step_num += 1
+
+            # Handle plain text
+            elif isinstance(section, str):
+                text = section.strip()
+                if text:
+                    parsed_instructions.append({
+                        'step_number': step_num,
+                        'instruction': text,
+                        'estimated_time_minutes': None
+                    })
+                    step_num += 1
+
+        return parsed_instructions
+
     def process_recipe(self, raw_content_id: uuid.UUID) -> Optional[uuid.UUID]:
         """
         Complete processing pipeline: raw content → structured recipe
@@ -202,17 +372,29 @@ class RecipeProcessor:
                 print("Failed to extract recipe data")
                 return None
 
-            # Parse ingredients
-            print("Parsing ingredients...")
-            ingredients = self.ingredient_parser.parse_and_normalize(
-                recipe_data.get('ingredients_text', '')
-            )
+            # QUALITY-AWARE PROCESSING: Use schema.org parsers when available (no LLM cost)
+            if recipe_data.get('has_schema_org'):
+                # HIGH QUALITY: Use schema.org data directly - no LLM needed
+                print("Parsing ingredients (Schema.org - no LLM)...")
+                ingredients = self._parse_schema_org_ingredients(
+                    recipe_data.get('schema_ingredients', [])
+                )
 
-            # Parse instructions
-            print("Parsing instructions...")
-            instructions = self.instruction_parser.parse_instructions(
-                recipe_data.get('instructions_text', '')
-            )
+                print("Parsing instructions (Schema.org - no LLM)...")
+                instructions = self._parse_schema_org_instructions(
+                    recipe_data.get('schema_instructions', [])
+                )
+            else:
+                # FALLBACK: Use LLM parsing for non-schema.org recipes
+                print("Parsing ingredients (LLM)...")
+                ingredients = self.ingredient_parser.parse_and_normalize(
+                    recipe_data.get('ingredients_text', '')
+                )
+
+                print("Parsing instructions (LLM)...")
+                instructions = self.instruction_parser.parse_instructions(
+                    recipe_data.get('instructions_text', '')
+                )
 
             # Estimate times if not provided
             time_estimates = {}
@@ -244,9 +426,9 @@ class RecipeProcessor:
                 prep_time_minutes=recipe_data.get('prep_time') or time_estimates.get('prep_time_minutes'),
                 cook_time_minutes=recipe_data.get('cook_time') or time_estimates.get('cook_time_minutes'),
                 total_time_minutes=recipe_data.get('total_time') or time_estimates.get('total_time_minutes'),
-                servings=recipe_data.get('servings'),
+                servings=self._parse_servings(recipe_data.get('servings')),
                 processed_at=datetime.utcnow(),
-                llm_model_version='gemini-2.0-flash-exp'
+                llm_model_version='gemini-2.0-flash'  # Using Flash for tagging, Flash-8b for parsing
             )
 
             self.db_session.add(recipe)

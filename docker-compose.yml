@@ -1,27 +1,6 @@
 version: '3.8'
 
 services:
-  # PostgreSQL for structured data
-  postgres:
-    image: postgres:15-alpine
-    container_name: annapurna-postgres
-    environment:
-      POSTGRES_DB: annapurna
-      POSTGRES_USER: annapurna
-      POSTGRES_PASSWORD: annapurna_dev_password
-      POSTGRES_HOST_AUTH_METHOD: trust
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U annapurna -d annapurna"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - annapurna-network
-
   # Qdrant vector database
   qdrant:
     image: qdrant/qdrant:latest
@@ -31,11 +10,6 @@ services:
       - "6334:6334"  # gRPC API
     volumes:
       - qdrant_data:/qdrant/storage
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:6333/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
     networks:
       - annapurna-network
 
@@ -63,7 +37,12 @@ services:
       dockerfile: Dockerfile
     container_name: annapurna-api
     environment:
-      - DATABASE_URL=postgresql://annapurna:annapurna_dev_password@postgres:5432/annapurna
+      - DATABASE_URL=${DATABASE_URL}
+      - DATABASE_HOST=${DATABASE_HOST}
+      - DATABASE_PORT=${DATABASE_PORT}
+      - DATABASE_NAME=${DATABASE_NAME}
+      - DATABASE_USER=${DATABASE_USER}
+      - DATABASE_PASSWORD=${DATABASE_PASSWORD}
       - REDIS_URL=redis://redis:6379/0
       - QDRANT_URL=http://qdrant:6333
       - ENVIRONMENT=development
@@ -76,12 +55,10 @@ services:
       - .:/app
       - /app/.venv  # Prevent overwriting container venv with host
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
       qdrant:
-        condition: service_healthy
+        condition: service_started
     command: uvicorn annapurna.api.main:app --host 0.0.0.0 --port 8000 --reload
     networks:
       - annapurna-network
@@ -93,7 +70,12 @@ services:
       dockerfile: Dockerfile
     container_name: annapurna-celery-worker
     environment:
-      - DATABASE_URL=postgresql://annapurna:annapurna_dev_password@postgres:5432/annapurna
+      - DATABASE_URL=${DATABASE_URL}
+      - DATABASE_HOST=${DATABASE_HOST}
+      - DATABASE_PORT=${DATABASE_PORT}
+      - DATABASE_NAME=${DATABASE_NAME}
+      - DATABASE_USER=${DATABASE_USER}
+      - DATABASE_PASSWORD=${DATABASE_PASSWORD}
       - REDIS_URL=redis://redis:6379/0
       - QDRANT_URL=http://qdrant:6333
       - ENVIRONMENT=development
@@ -102,12 +84,10 @@ services:
     volumes:
       - .:/app
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
       qdrant:
-        condition: service_healthy
+        condition: service_started
     command: celery -A annapurna.celery_app worker --loglevel=info --concurrency=4
     networks:
       - annapurna-network
@@ -119,7 +99,12 @@ services:
       dockerfile: Dockerfile
     container_name: annapurna-celery-beat
     environment:
-      - DATABASE_URL=postgresql://annapurna:annapurna_dev_password@postgres:5432/annapurna
+      - DATABASE_URL=${DATABASE_URL}
+      - DATABASE_HOST=${DATABASE_HOST}
+      - DATABASE_PORT=${DATABASE_PORT}
+      - DATABASE_NAME=${DATABASE_NAME}
+      - DATABASE_USER=${DATABASE_USER}
+      - DATABASE_PASSWORD=${DATABASE_PASSWORD}
       - REDIS_URL=redis://redis:6379/0
       - QDRANT_URL=http://qdrant:6333
       - ENVIRONMENT=development
@@ -128,12 +113,10 @@ services:
     volumes:
       - .:/app
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
       qdrant:
-        condition: service_healthy
+        condition: service_started
     command: celery -A annapurna.celery_app beat --loglevel=info
     networks:
       - annapurna-network
@@ -145,7 +128,17 @@ services:
       dockerfile: Dockerfile
     container_name: annapurna-flower
     environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - DATABASE_HOST=${DATABASE_HOST}
+      - DATABASE_PORT=${DATABASE_PORT}
+      - DATABASE_NAME=${DATABASE_NAME}
+      - DATABASE_USER=${DATABASE_USER}
+      - DATABASE_PASSWORD=${DATABASE_PASSWORD}
       - REDIS_URL=redis://redis:6379/0
+      - QDRANT_URL=http://qdrant:6333
+      - ENVIRONMENT=development
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
     ports:
       - "5555:5555"
     depends_on:
@@ -156,7 +149,6 @@ services:
       - annapurna-network
 
 volumes:
-  postgres_data:
   redis_data:
   qdrant_data:
 

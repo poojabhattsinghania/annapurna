@@ -5,8 +5,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 import uuid
 
-from annapurna.models.recipe import Recipe
-from annapurna.models.ingredient import RecipeIngredient
+from annapurna.models.recipe import Recipe, RecipeIngredient
 from annapurna.models.nutrition import IngredientNutrition, RecipeNutrition, NutritionGoal
 
 

@@ -17,12 +17,27 @@ class WebScraper:
     """Scraper for recipe websites"""
 
     def __init__(self):
-        self.user_agent = settings.scraper_user_agent
+        # Use a real Chrome browser user agent to avoid bot detection
+        self.user_agent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+
+        # Browser-like headers to bypass bot detection
+        # Note: Accept-Encoding removed - requests library handles compression automatically
         self.headers = {
             'User-Agent': self.user_agent,
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Sec-Fetch-User': '?1',
+            'Cache-Control': 'max-age=0',
         }
+
+        # Create session for cookie handling
+        self.session = requests.Session()
+        self.session.headers.update(self.headers)
 
     def extract_schema_org_data(self, soup: BeautifulSoup) -> Optional[Dict]:
         """Extract Schema.org JSON-LD recipe data"""
@@ -113,10 +128,30 @@ class WebScraper:
     def fetch_page(self, url: str) -> Optional[tuple]:
         """Fetch webpage and return (html_content, soup)"""
         try:
-            response = requests.get(url, headers=self.headers, timeout=30)
+            # Use session for cookie persistence
+            # Remove Accept-Encoding to let requests handle it automatically
+            temp_headers = self.session.headers.copy()
+            if 'Accept-Encoding' in temp_headers:
+                del temp_headers['Accept-Encoding']
+
+            response = self.session.get(url, headers=temp_headers, timeout=30, allow_redirects=True)
             response.raise_for_status()
 
+            # Check if we got an image instead of HTML (bot detection)
+            content_type = response.headers.get('Content-Type', '')
+            if 'image/' in content_type:
+                print(f"Bot detected: Site returned image instead of HTML (Content-Type: {content_type})")
+                return None
+
+            # Ensure proper text encoding
+            response.encoding = response.apparent_encoding or 'utf-8'
             html_content = response.text
+
+            # Validate we got HTML
+            if not html_content or len(html_content) < 100:
+                print(f"Warning: Got suspiciously short content ({len(html_content)} chars)")
+                return None
+
             soup = BeautifulSoup(html_content, 'lxml')
 
             return (html_content, soup)
@@ -172,6 +207,9 @@ class WebScraper:
                 return None
 
             html_content, soup = fetch_result
+
+            # Sanitize HTML content (remove NUL bytes for PostgreSQL)
+            html_content = html_content.replace('\x00', '')
 
             # Try multiple extraction methods
             metadata = {}
@@ -271,7 +309,7 @@ class WebScraper:
 
         try:
             print(f"Fetching sitemap from {sitemap_url}...")
-            response = requests.get(sitemap_url, headers=self.headers)
+            response = self.session.get(sitemap_url, timeout=30)
             response.raise_for_status()
 
             soup = BeautifulSoup(response.content, 'xml')
