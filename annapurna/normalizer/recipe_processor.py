@@ -10,6 +10,8 @@ from slugify import slugify
 from annapurna.normalizer.ingredient_parser import IngredientParser
 from annapurna.normalizer.instruction_parser import InstructionParser
 from annapurna.normalizer.auto_tagger import AutoTagger
+from annapurna.services.data_validation import validate_recipe, ValidationSeverity
+from annapurna.services.vector_embeddings import VectorEmbeddingsService
 from annapurna.models.raw_data import RawScrapedContent
 from annapurna.models.recipe import (
     Recipe,
@@ -28,6 +30,7 @@ class RecipeProcessor:
         self.ingredient_parser = IngredientParser(db_session)
         self.instruction_parser = InstructionParser()
         self.auto_tagger = AutoTagger(db_session)
+        self.vector_service = VectorEmbeddingsService()
 
     def extract_recipe_data(self, raw_content: RawScrapedContent) -> Optional[Dict]:
         """
@@ -229,8 +232,13 @@ class RecipeProcessor:
         remaining = ingredient_str
         if quantity_match:
             remaining = remaining[quantity_match.end():].strip()
-        if unit_match:
-            remaining = remaining[unit_match.end():].strip()
+
+        # Remove unit from the remaining string (not from original position)
+        if unit_match and unit:
+            # Find and remove the unit pattern from remaining string
+            unit_in_remaining = re.search(unit_pattern, remaining, re.IGNORECASE)
+            if unit_in_remaining:
+                remaining = remaining[unit_in_remaining.end():].strip()
 
         # Remove parentheticals and anything after comma
         item = re.split(r'[,(]', remaining)[0].strip()
@@ -372,6 +380,46 @@ class RecipeProcessor:
                 print("Failed to extract recipe data")
                 return None
 
+            # DATA VALIDATION: Check recipe quality before processing
+            print("Validating recipe data...")
+            validation_data = {
+                'title': recipe_data.get('title', ''),
+                'description': recipe_data.get('description', ''),
+                'source_url': raw_content.source_url,
+                'recipe_creator_name': raw_content.source_creator_id,
+                'ingredients': recipe_data.get('schema_ingredients', []) if recipe_data.get('has_schema_org') else [],
+                'instructions': recipe_data.get('schema_instructions', []) if recipe_data.get('has_schema_org') else [],
+                'prep_time_minutes': recipe_data.get('prep_time'),
+                'cook_time_minutes': recipe_data.get('cook_time'),
+                'total_time_minutes': recipe_data.get('total_time')
+            }
+
+            is_valid, validation_issues = validate_recipe(validation_data)
+
+            # Log validation issues
+            if validation_issues:
+                error_count = sum(1 for issue in validation_issues if issue.severity == ValidationSeverity.ERROR)
+                warning_count = sum(1 for issue in validation_issues if issue.severity == ValidationSeverity.WARNING)
+
+                if error_count > 0:
+                    print(f"  ✗ Validation ERRORS ({error_count}):")
+                    for issue in validation_issues:
+                        if issue.severity == ValidationSeverity.ERROR:
+                            print(f"    - {issue.field}: {issue.message}")
+
+                if warning_count > 0:
+                    print(f"  ⚠ Validation WARNINGS ({warning_count}):")
+                    for issue in validation_issues:
+                        if issue.severity == ValidationSeverity.WARNING:
+                            print(f"    - {issue.field}: {issue.message}")
+
+            # Skip recipes with blocking errors
+            if not is_valid:
+                print("✗ Recipe validation failed - skipping")
+                return None
+            else:
+                print("✓ Recipe validation passed")
+
             # QUALITY-AWARE PROCESSING: Use schema.org parsers when available (no LLM cost)
             if recipe_data.get('has_schema_org'):
                 # HIGH QUALITY: Use schema.org data directly - no LLM needed
@@ -475,6 +523,24 @@ class RecipeProcessor:
 
             # Commit all changes
             self.db_session.commit()
+
+            # VECTOR EMBEDDINGS: Create recipe embedding for similarity search
+            print("Creating vector embedding...")
+            try:
+                tags_list = [tag['value'] for tag in tag_result['tags']]
+                embedding_created = self.vector_service.create_recipe_embedding(
+                    recipe_id=int(str(recipe.id).replace('-', ''), 16) % (2**63),  # Convert UUID to int for Qdrant
+                    title=recipe.title,
+                    description=recipe.description or '',
+                    tags=tags_list
+                )
+
+                if embedding_created:
+                    print("✓ Vector embedding created")
+                else:
+                    print("⚠ Failed to create vector embedding (non-blocking)")
+            except Exception as e:
+                print(f"⚠ Vector embedding error (non-blocking): {str(e)}")
 
             print(f"✓ Recipe processed successfully: {recipe.title}")
             print(f"  - {len(ingredients)} ingredients")

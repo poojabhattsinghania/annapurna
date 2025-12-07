@@ -58,3 +58,4 @@ Thumbs.db
 # Project Specific
 raw_scraped_data/
 embeddings_cache/
+*.sql

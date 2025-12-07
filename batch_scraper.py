@@ -18,16 +18,18 @@ import argparse
 
 
 class BatchScraper:
-    def __init__(self, base_url: str = "http://localhost:8000", rate_limit: float = 3.0):
+    def __init__(self, base_url: str = "http://localhost:8000", rate_limit: float = 3.0, cloudflare_mode: bool = False):
         """
         Initialize batch scraper
 
         Args:
             base_url: API base URL
             rate_limit: Seconds to wait between requests (default: 3s)
+            cloudflare_mode: Use Cloudflare bypass endpoint (default: False)
         """
         self.base_url = base_url
         self.rate_limit = rate_limit
+        self.cloudflare_mode = cloudflare_mode
         self.stats = {
             'success': 0,
             'failed': 0,
@@ -94,8 +96,11 @@ class BatchScraper:
         max_retries = 3
 
         try:
+            # Use Cloudflare endpoint if cloudflare_mode is enabled
+            endpoint = "/v1/scrape/website/cloudflare" if self.cloudflare_mode else "/v1/scrape/website"
+
             response = requests.post(
-                f"{self.base_url}/v1/scrape/website",
+                f"{self.base_url}{endpoint}",
                 json={"url": url, "creator_name": creator_name},
                 timeout=60
             )
@@ -241,6 +246,8 @@ def main():
                        help='Skip validation phase')
     parser.add_argument('--api-url', default='http://localhost:8000',
                        help='API base URL (default: http://localhost:8000)')
+    parser.add_argument('--cloudflare', action='store_true',
+                       help='Use Cloudflare bypass endpoint for protected sites')
 
     args = parser.parse_args()
 
@@ -251,7 +258,7 @@ def main():
     print(f"Loaded {len(urls)} URLs from {args.file}")
 
     # Create scraper and run
-    scraper = BatchScraper(base_url=args.api_url, rate_limit=args.rate_limit)
+    scraper = BatchScraper(base_url=args.api_url, rate_limit=args.rate_limit, cloudflare_mode=args.cloudflare)
     results = scraper.batch_scrape(urls, args.creator, validate=not args.no_validate)
 
     # Exit with appropriate code
