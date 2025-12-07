@@ -7,6 +7,7 @@ from annapurna.models.base import get_db
 from annapurna.api.schemas import ScrapeRequest, ScrapeResponse
 from annapurna.scraper.youtube import YouTubeScraper
 from annapurna.scraper.web import WebScraper
+from annapurna.scraper.cloudflare_web import CloudflareWebScraper
 
 router = APIRouter()
 
@@ -92,4 +93,37 @@ def scrape_website(
         return ScrapeResponse(
             success=False,
             message="Failed to scrape website"
+        )
+
+
+@router.post("/website/cloudflare", response_model=ScrapeResponse)
+def scrape_cloudflare_website(
+    request: ScrapeRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+    """
+    Scrape recipe website protected by Cloudflare
+
+    Uses cloudscraper library to bypass JavaScript challenges.
+    For sites like CookWithManali that have bot protection.
+    """
+    scraper = CloudflareWebScraper()
+
+    result_id = scraper.scrape_website(
+        request.url,
+        request.creator_name,
+        db
+    )
+
+    if result_id:
+        return ScrapeResponse(
+            success=True,
+            message="Cloudflare-protected website scraped successfully",
+            scraped_ids=[result_id]
+        )
+    else:
+        return ScrapeResponse(
+            success=False,
+            message="Failed to scrape Cloudflare-protected website"
         )
