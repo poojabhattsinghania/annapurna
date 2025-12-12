@@ -81,13 +81,13 @@ Return ONLY a valid JSON array, no additional text.
 
         return result
 
-    def fuzzy_match_ingredient(self, item_name: str, threshold: int = 80) -> Optional[IngredientMaster]:
+    def fuzzy_match_ingredient(self, item_name: str, threshold: int = 70) -> Optional[IngredientMaster]:
         """
         Find matching ingredient from master list using fuzzy matching
 
         Args:
             item_name: Ingredient name to match
-            threshold: Minimum fuzzy match score (0-100)
+            threshold: Minimum fuzzy match score (0-100, default: 70 for better coverage)
 
         Returns:
             IngredientMaster object or None

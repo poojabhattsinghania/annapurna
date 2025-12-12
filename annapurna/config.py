@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     openai_api_key: Optional[str] = None
 
     # LLM Model Selection
-    gemini_model_lite: str = "gemini-2.0-flash-8b"  # For simple structured tasks (cheapest - 8B params)
+    gemini_model_lite: str = "gemini-2.0-flash-exp"  # For simple structured tasks (experimental, faster)
     gemini_model_default: str = "gemini-2.0-flash"  # For complex reasoning (workhorse)
     gemini_model_complex: str = "gemini-2.0-flash"  # For most complex tasks
 

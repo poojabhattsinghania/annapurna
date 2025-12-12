@@ -59,3 +59,7 @@ Thumbs.db
 raw_scraped_data/
 embeddings_cache/
 *.sql
+celerybeat-schedule
+*.txt
+!requirements.txt
+!init-db.sql

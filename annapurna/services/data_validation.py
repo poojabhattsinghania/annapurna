@@ -133,8 +133,8 @@ class RecipeDataValidator:
                 message=f"Description too short (min {self.MIN_DESCRIPTION_LENGTH} characters recommended)"
             ))
 
-    def _validate_ingredients(self, ingredients: List[Dict]):
-        """Validate ingredients list"""
+    def _validate_ingredients(self, ingredients: List):
+        """Validate ingredients list (handles both raw strings and parsed dicts)"""
         if not ingredients:
             self.issues.append(ValidationIssue(
                 field="ingredients",
@@ -152,34 +152,46 @@ class RecipeDataValidator:
 
         # Check for ingredient quality
         for i, ingredient in enumerate(ingredients):
-            if not ingredient.get("standard_name") and not ingredient.get("item"):
-                self.issues.append(ValidationIssue(
-                    field=f"ingredients[{i}]",
-                    severity=ValidationSeverity.WARNING,
-                    message="Ingredient missing name"
-                ))
+            # Handle raw string format (before LLM parsing)
+            if isinstance(ingredient, str):
+                if not ingredient.strip():
+                    self.issues.append(ValidationIssue(
+                        field=f"ingredients[{i}]",
+                        severity=ValidationSeverity.WARNING,
+                        message="Ingredient is empty"
+                    ))
+                continue
 
-            # Check for reasonable quantities
-            if ingredient.get("quantity"):
-                try:
-                    qty = float(ingredient["quantity"])
-                    if qty <= 0:
-                        self.issues.append(ValidationIssue(
-                            field=f"ingredients[{i}].quantity",
-                            severity=ValidationSeverity.WARNING,
-                            message="Ingredient quantity must be positive"
-                        ))
-                    if qty > 10000:
-                        self.issues.append(ValidationIssue(
-                            field=f"ingredients[{i}].quantity",
-                            severity=ValidationSeverity.WARNING,
-                            message="Ingredient quantity seems unreasonably large"
-                        ))
-                except (ValueError, TypeError):
-                    pass
+            # Handle dict format (after LLM parsing)
+            if isinstance(ingredient, dict):
+                if not ingredient.get("standard_name") and not ingredient.get("item"):
+                    self.issues.append(ValidationIssue(
+                        field=f"ingredients[{i}]",
+                        severity=ValidationSeverity.WARNING,
+                        message="Ingredient missing name"
+                    ))
 
-    def _validate_instructions(self, instructions: List[Dict]):
-        """Validate cooking instructions"""
+                # Check for reasonable quantities
+                if ingredient.get("quantity"):
+                    try:
+                        qty = float(ingredient["quantity"])
+                        if qty <= 0:
+                            self.issues.append(ValidationIssue(
+                                field=f"ingredients[{i}].quantity",
+                                severity=ValidationSeverity.WARNING,
+                                message="Ingredient quantity must be positive"
+                            ))
+                        if qty > 10000:
+                            self.issues.append(ValidationIssue(
+                                field=f"ingredients[{i}].quantity",
+                                severity=ValidationSeverity.WARNING,
+                                message="Ingredient quantity seems unreasonably large"
+                            ))
+                    except (ValueError, TypeError):
+                        pass
+
+    def _validate_instructions(self, instructions: List):
+        """Validate cooking instructions (handles both raw strings and parsed dicts)"""
         if not instructions:
             self.issues.append(ValidationIssue(
                 field="instructions",
@@ -197,13 +209,26 @@ class RecipeDataValidator:
 
         # Check instruction quality
         for i, instruction in enumerate(instructions):
-            step_text = instruction.get("instruction", "")
-            if not step_text or len(step_text.strip()) < 10:
-                self.issues.append(ValidationIssue(
-                    field=f"instructions[{i}]",
-                    severity=ValidationSeverity.WARNING,
-                    message="Instruction step is too short or empty"
-                ))
+            # Handle raw string format (before LLM parsing)
+            if isinstance(instruction, str):
+                step_text = instruction.strip()
+                if not step_text or len(step_text) < 10:
+                    self.issues.append(ValidationIssue(
+                        field=f"instructions[{i}]",
+                        severity=ValidationSeverity.WARNING,
+                        message="Instruction step is too short or empty"
+                    ))
+                continue
+
+            # Handle dict format (after LLM parsing)
+            if isinstance(instruction, dict):
+                step_text = instruction.get("instruction", "")
+                if not step_text or len(step_text.strip()) < 10:
+                    self.issues.append(ValidationIssue(
+                        field=f"instructions[{i}]",
+                        severity=ValidationSeverity.WARNING,
+                        message="Instruction step is too short or empty"
+                    ))
 
     def _validate_timings(self, recipe_data: Dict):
         """Validate prep time, cook time, and total time"""

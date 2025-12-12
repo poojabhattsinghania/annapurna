@@ -154,7 +154,8 @@ class RecipeIngredient(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     recipe_id = Column(UUID(as_uuid=True), ForeignKey("recipes.id"), nullable=False, index=True)
-    ingredient_id = Column(UUID(as_uuid=True), ForeignKey("ingredients_master.id"), nullable=False, index=True)
+    ingredient_id = Column(UUID(as_uuid=True), ForeignKey("ingredients_master.id"), nullable=True, index=True)  # Nullable to allow unmatched ingredients
+    ingredient_name = Column(String(200))  # Store parsed name for unmatched ingredients
     quantity = Column(Float)
     unit = Column(String(50))  # grams, ml, pieces, cups, tsp, tbsp
     original_text = Column(Text)  # "2 katori aloo" - preserve original

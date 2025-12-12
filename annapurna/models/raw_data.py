@@ -51,6 +51,11 @@ class RawScrapedContent(Base):
     scraped_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
     scraper_version = Column(String(50), nullable=False)
 
+    # Processing tracking
+    processing_attempts = Column(Integer, default=0, nullable=False)
+    processing_failed_at = Column(DateTime, nullable=True)
+    processing_error = Column(Text, nullable=True)
+
     # Relationships
     creator = relationship("ContentCreator", back_populates="scraped_content")
     recipes = relationship("Recipe", back_populates="scraped_content")

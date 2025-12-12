@@ -181,9 +181,13 @@ class WebScraper:
                 source_url=url
             ).first()
 
-            if existing:
+            if existing and existing.raw_html:
                 print(f"URL already scraped, skipping...")
                 return str(existing.id)
+
+            # If URL exists but has no HTML, update it instead of creating new
+            if existing and not existing.raw_html:
+                print(f"URL exists but not scraped, will update...")
 
             # Get creator
             creator = db_session.query(ContentCreator).filter_by(
@@ -238,20 +242,30 @@ class WebScraper:
                 )
                 return None
 
-            # Create raw scraped content record
-            raw_content = RawScrapedContent(
-                source_url=url,
-                source_type='website',
-                source_creator_id=creator.id,
-                source_platform='website',
-                raw_transcript=None,
-                raw_html=html_content,
-                raw_metadata_json=metadata,
-                scraped_at=datetime.utcnow(),
-                scraper_version='1.0.0'
-            )
-
-            db_session.add(raw_content)
+            # Create or update raw scraped content record
+            if existing and not existing.raw_html:
+                # Update existing record
+                raw_content = existing
+                raw_content.raw_html = html_content
+                raw_content.raw_metadata_json = metadata
+                raw_content.scraped_at = datetime.utcnow()
+                raw_content.scraper_version = '1.0.0'
+                raw_content.processing_attempts = (raw_content.processing_attempts or 0) + 1
+                print("Updating existing record...")
+            else:
+                # Create new record
+                raw_content = RawScrapedContent(
+                    source_url=url,
+                    source_type='website',
+                    source_creator_id=creator.id,
+                    source_platform='website',
+                    raw_transcript=None,
+                    raw_html=html_content,
+                    raw_metadata_json=metadata,
+                    scraped_at=datetime.utcnow(),
+                    scraper_version='1.0.0'
+                )
+                db_session.add(raw_content)
 
             # Log success
             log_entry = ScrapingLog(

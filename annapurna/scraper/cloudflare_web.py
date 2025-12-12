@@ -74,6 +74,59 @@ class CloudflareWebScraper:
             print(f"Error extracting Schema.org data: {str(e)}")
             return None
 
+    def extract_with_recipe_scrapers(self, url: str) -> Optional[Dict]:
+        """Use recipe-scrapers library (supports 100+ sites)"""
+        try:
+            scraper = scrape_me(url, wild_mode=True)
+
+            return {
+                'title': scraper.title(),
+                'ingredients': scraper.ingredients(),
+                'instructions': scraper.instructions(),
+                'yields': scraper.yields(),
+                'total_time': scraper.total_time(),
+                'image': scraper.image(),
+                'host': scraper.host(),
+                'author': scraper.author() if hasattr(scraper, 'author') else None,
+                'description': scraper.description() if hasattr(scraper, 'description') else None,
+            }
+
+        except WebsiteNotImplementedError:
+            print("  Website not supported by recipe-scrapers library")
+            return None
+        except Exception as e:
+            print(f"  Error with recipe-scrapers: {str(e)}")
+            return None
+
+    def extract_manual(self, soup: BeautifulSoup) -> Dict:
+        """Manual extraction for unsupported sites"""
+        # Try to find title
+        title = None
+        title_tags = soup.find_all(['h1', 'h2'], class_=re.compile('title|recipe|heading', re.I))
+        if title_tags:
+            title = title_tags[0].get_text(strip=True)
+
+        # Try to find ingredients
+        ingredients = []
+        ingredient_sections = soup.find_all(['ul', 'ol', 'div'], class_=re.compile('ingredient', re.I))
+        for section in ingredient_sections:
+            items = section.find_all('li')
+            ingredients.extend([item.get_text(strip=True) for item in items if item.get_text(strip=True)])
+
+        # Try to find instructions
+        instructions = []
+        instruction_sections = soup.find_all(['ol', 'div'], class_=re.compile('instruction|method|direction', re.I))
+        for section in instruction_sections:
+            items = section.find_all(['li', 'p'])
+            instructions.extend([item.get_text(strip=True) for item in items if item.get_text(strip=True)])
+
+        return {
+            'title': title,
+            'ingredients': ingredients,
+            'instructions': instructions,
+            'manual_extraction': True
+        }
+
     def fetch_page(self, url: str) -> Optional[tuple]:
         """Fetch webpage and return (html_content, soup)"""
         try:
@@ -123,19 +176,55 @@ class CloudflareWebScraper:
 
             html_content, soup = page_data
 
-            # Try Schema.org extraction first (highest quality)
-            schema_data = self.extract_schema_org_data(soup)
-
-            # Prepare metadata
+            # Try multiple extraction methods (fallback chain)
             metadata = {
                 'url': url,
-                'scraped_at': datetime.utcnow().isoformat(),
-                'has_schema_org': schema_data is not None
+                'scraped_at': datetime.utcnow().isoformat()
             }
 
+            # Method 1: Schema.org extraction (highest quality)
+            print("  Trying Schema.org extraction...")
+            schema_data = self.extract_schema_org_data(soup)
             if schema_data:
                 metadata['schema_org'] = schema_data
-                print("✓ Schema.org data found")
+                print("  ✓ Schema.org data extracted")
+            else:
+                print("  ✗ No Schema.org data found")
+
+                # Method 2: recipe-scrapers library (fallback #1)
+                print("  Trying recipe-scrapers library...")
+                recipe_scrapers_data = self.extract_with_recipe_scrapers(url)
+                if recipe_scrapers_data:
+                    metadata['recipe_scrapers'] = recipe_scrapers_data
+                    print("  ✓ Recipe-scrapers data extracted")
+
+                    # Check if instructions are missing/empty - supplement with manual extraction
+                    instructions = recipe_scrapers_data.get('instructions', '')
+                    if not instructions or len(instructions.strip()) == 0:
+                        print("  ⚠️  Recipe-scrapers: instructions empty, trying manual extraction...")
+                        manual_data = self.extract_manual(soup)
+                        manual_instructions = manual_data.get('instructions', [])
+
+                        if manual_instructions and len(manual_instructions) > 0:
+                            # Merge: use recipe-scrapers ingredients + manual instructions
+                            instructions_text = '\n'.join(manual_instructions)
+                            metadata['recipe_scrapers']['instructions'] = instructions_text
+                            metadata['instructions_source'] = 'manual_fallback'
+                            print(f"  ✓ Supplemented with {len(manual_instructions)} manual instruction steps")
+                        else:
+                            print("  ✗ Manual extraction also found no instructions")
+                else:
+                    print("  ✗ Recipe-scrapers failed")
+
+                    # Method 3: Manual extraction (fallback #2)
+                    print("  Trying manual extraction...")
+                    manual_data = self.extract_manual(soup)
+                    if manual_data.get('ingredients') or manual_data.get('instructions'):
+                        metadata['manual'] = manual_data
+                        print(f"  ✓ Manual extraction: {len(manual_data.get('ingredients', []))} ingredients, {len(manual_data.get('instructions', []))} steps")
+                    else:
+                        print("  ✗ Manual extraction found no recipe data")
+                        print("  ⚠️  WARNING: No recipe data extracted by any method!")
 
             # Get or create content creator
             creator = db_session.query(ContentCreator).filter_by(name=creator_name).first()

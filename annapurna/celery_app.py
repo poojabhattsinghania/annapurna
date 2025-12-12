@@ -59,6 +59,11 @@ celery_app.conf.beat_schedule = {
         'task': 'annapurna.tasks.maintenance.refresh_similarity_scores',
         'schedule': 604800.0,  # Weekly
     },
+    'auto-process-new-recipes': {
+        'task': 'annapurna.tasks.processing.batch_process_recipes',
+        'schedule': 300.0,  # Every 5 minutes
+        'kwargs': {'batch_size': 500},  # Process 500 recipes per run
+    },
 }
 
 if __name__ == '__main__':

@@ -10,7 +10,7 @@ from annapurna.models.recipe import Recipe, RecipeTag
 from annapurna.models.content import ContentCreator
 from annapurna.models.taxonomy import TagDimension
 from annapurna.api.schemas import SearchRequest, SearchResponse, SearchResult, RecipeSummary
-from annapurna.utils.embeddings import EmbeddingGenerator
+from annapurna.utils.qdrant_client import QdrantVectorDB
 from annapurna.utils.cache import cached, cache
 
 router = APIRouter()
@@ -26,7 +26,7 @@ class HybridSearch:
     def _init_embedding_generator(self):
         """Lazy load embedding generator"""
         if self.embedding_gen is None:
-            self.embedding_gen = EmbeddingGenerator()
+            self.embedding_gen = QdrantVectorDB()
 
     def apply_sql_filters(self, query, filters):
         """Apply SQL filters to query"""
@@ -168,7 +168,7 @@ class HybridSearch:
 
         return scored_results, total
 
-    @cached('search_hybrid', ttl=1800)  # Cache for 30 minutes
+    # @cached('search_hybrid', ttl=1800)  # Cache for 30 minutes - DISABLED: causes serialization issue with self
     def hybrid_search(self, query_text: str, filters, limit: int, offset: int):
         """
         Hybrid search: Semantic search + SQL filters
@@ -187,7 +187,7 @@ class HybridSearch:
 
         # Search with larger limit to account for filters
         qdrant_results = qdrant.search_similar(
-            query_embedding=query_embedding.tolist(),
+            query_embedding=query_embedding,  # VectorEmbeddingsService returns list directly
             limit=limit * 5,  # Get 5x more to allow for filtering
             score_threshold=0.3
         )
@@ -195,13 +195,27 @@ class HybridSearch:
         if not qdrant_results:
             return [], 0
 
-        # Get recipe IDs from Qdrant results
-        recipe_ids = [result["recipe_id"] for result in qdrant_results]
+        # Get recipe IDs from Qdrant results (filter out invalid UUIDs)
+        import uuid
+        valid_recipe_ids = []
+        for result in qdrant_results:
+            rid = result["recipe_id"]
+            try:
+                # Try to convert to UUID (handles both string UUIDs and valid formats)
+                if isinstance(rid, str):
+                    valid_recipe_ids.append(uuid.UUID(rid))
+                elif isinstance(rid, uuid.UUID):
+                    valid_recipe_ids.append(rid)
+                # Skip integers and other invalid formats
+            except (ValueError, AttributeError):
+                continue
+
+        if not valid_recipe_ids:
+            return [], 0
 
         # Fetch recipes from database and apply SQL filters
-        import uuid
         query = self.db.query(Recipe).filter(
-            Recipe.id.in_([uuid.UUID(rid) for rid in recipe_ids])
+            Recipe.id.in_(valid_recipe_ids)
         )
 
         # Apply SQL filters

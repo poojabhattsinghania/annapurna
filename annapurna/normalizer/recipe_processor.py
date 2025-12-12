@@ -11,7 +11,7 @@ from annapurna.normalizer.ingredient_parser import IngredientParser
 from annapurna.normalizer.instruction_parser import InstructionParser
 from annapurna.normalizer.auto_tagger import AutoTagger
 from annapurna.services.data_validation import validate_recipe, ValidationSeverity
-from annapurna.services.vector_embeddings import VectorEmbeddingsService
+from annapurna.utils.qdrant_client import get_qdrant_client
 from annapurna.models.raw_data import RawScrapedContent
 from annapurna.models.recipe import (
     Recipe,
@@ -30,7 +30,7 @@ class RecipeProcessor:
         self.ingredient_parser = IngredientParser(db_session)
         self.instruction_parser = InstructionParser()
         self.auto_tagger = AutoTagger(db_session)
-        self.vector_service = VectorEmbeddingsService()
+        self.vector_service = get_qdrant_client()  # Use consolidated Qdrant client
 
     def extract_recipe_data(self, raw_content: RawScrapedContent) -> Optional[Dict]:
         """
@@ -86,28 +86,38 @@ class RecipeProcessor:
                 print(f"⚠️  Invalid HTML (binary image data) - skipping: {raw_content.source_url}")
                 return {}
 
-        # Prefer Schema.org data (most reliable)
+        # Prefer Schema.org data (most reliable) - but only if complete
         if 'schema_org' in metadata:
             schema = metadata['schema_org']
-            return {
-                'title': schema.get('name'),
-                'description': schema.get('description', ''),
-                'ingredients_text': '\n'.join(schema.get('recipeIngredient', [])),
-                'instructions_text': self._extract_instructions_from_schema(schema),
-                'prep_time': self._parse_duration(schema.get('prepTime')),
-                'cook_time': self._parse_duration(schema.get('cookTime')),
-                'total_time': self._parse_duration(schema.get('totalTime')),
-                'servings': self._parse_servings(schema.get('recipeYield')),
-                'source_type': 'website',
-                'author': schema.get('author', {}).get('name') if isinstance(schema.get('author'), dict) else schema.get('author'),
-                # NEW: Include raw schema.org data for quality-aware processing
-                'has_schema_org': True,
-                'schema_ingredients': schema.get('recipeIngredient', []),
-                'schema_instructions': schema.get('recipeInstructions', [])
-            }
+
+            # Validate Schema.org completeness
+            has_ingredients = bool(schema.get('recipeIngredient'))
+            has_instructions = bool(schema.get('recipeInstructions'))
+
+            if has_ingredients and has_instructions:
+                # Complete Schema.org - use it
+                return {
+                    'title': schema.get('name'),
+                    'description': schema.get('description', ''),
+                    'ingredients_text': '\n'.join(schema.get('recipeIngredient', [])),
+                    'instructions_text': self._extract_instructions_from_schema(schema),
+                    'prep_time': self._parse_duration(schema.get('prepTime')),
+                    'cook_time': self._parse_duration(schema.get('cookTime')),
+                    'total_time': self._parse_duration(schema.get('totalTime')),
+                    'servings': self._parse_servings(schema.get('recipeYield')),
+                    'source_type': 'website',
+                    'author': schema.get('author', {}).get('name') if isinstance(schema.get('author'), dict) else schema.get('author'),
+                    # NEW: Include raw schema.org data for quality-aware processing
+                    'has_schema_org': True,
+                    'schema_ingredients': schema.get('recipeIngredient', []),
+                    'schema_instructions': schema.get('recipeInstructions', [])
+                }
+            else:
+                # Incomplete Schema.org - fall back to recipe-scrapers
+                print(f"⚠️  Incomplete Schema.org data (ingredients: {has_ingredients}, instructions: {has_instructions}) - falling back to recipe-scrapers")
 
         # Fallback to recipe-scrapers data
-        elif 'recipe_scrapers' in metadata:
+        if 'recipe_scrapers' in metadata:
             rs = metadata['recipe_scrapers']
             return {
                 'title': rs.get('title'),
@@ -275,13 +285,24 @@ class RecipeProcessor:
                 normalized_ingredients.append({
                     'ingredient_id': str(matched.id),
                     'standard_name': matched.standard_name,
+                    'ingredient_name': None,  # Not needed when matched
                     'quantity': parsed['quantity'],
                     'unit': parsed['unit'],
                     'original_text': parsed['original_text'],
                     'confidence': 0.99  # Schema.org data is high quality
                 })
             else:
-                print(f"Schema.org: Could not match ingredient '{parsed['item']}' to master list")
+                # Add ingredient even without master match
+                print(f"Schema.org: Could not match ingredient '{parsed['item']}' to master list - adding as unmatched")
+                normalized_ingredients.append({
+                    'ingredient_id': None,  # No master match
+                    'standard_name': None,
+                    'ingredient_name': parsed['item'],  # Store parsed name
+                    'quantity': parsed['quantity'],
+                    'unit': parsed['unit'],
+                    'original_text': parsed['original_text'],
+                    'confidence': 0.75  # Lower confidence for unmatched
+                })
 
         return normalized_ingredients
 
@@ -381,20 +402,27 @@ class RecipeProcessor:
                 return None
 
             # DATA VALIDATION: Check recipe quality before processing
-            print("Validating recipe data...")
-            validation_data = {
-                'title': recipe_data.get('title', ''),
-                'description': recipe_data.get('description', ''),
-                'source_url': raw_content.source_url,
-                'recipe_creator_name': raw_content.source_creator_id,
-                'ingredients': recipe_data.get('schema_ingredients', []) if recipe_data.get('has_schema_org') else [],
-                'instructions': recipe_data.get('schema_instructions', []) if recipe_data.get('has_schema_org') else [],
-                'prep_time_minutes': recipe_data.get('prep_time'),
-                'cook_time_minutes': recipe_data.get('cook_time'),
-                'total_time_minutes': recipe_data.get('total_time')
-            }
+            # Skip early validation for Schema.org recipes - they're pre-validated by schema
+            if not recipe_data.get('has_schema_org'):
+                print("Validating recipe data...")
+                validation_data = {
+                    'title': recipe_data.get('title', ''),
+                    'description': recipe_data.get('description', ''),
+                    'source_url': raw_content.source_url,
+                    'recipe_creator_name': raw_content.source_creator_id,
+                    'ingredients': recipe_data.get('schema_ingredients', []),
+                    'instructions': recipe_data.get('schema_instructions', []),
+                    'prep_time_minutes': recipe_data.get('prep_time'),
+                    'cook_time_minutes': recipe_data.get('cook_time'),
+                    'total_time_minutes': recipe_data.get('total_time')
+                }
 
-            is_valid, validation_issues = validate_recipe(validation_data)
+                is_valid, validation_issues = validate_recipe(validation_data)
+            else:
+                # Schema.org recipes are high quality - skip pre-validation
+                print("Skipping pre-validation for Schema.org recipe (high quality)")
+                is_valid = True
+                validation_issues = []
 
             # Log validation issues
             if validation_issues:
@@ -451,10 +479,17 @@ class RecipeProcessor:
 
             # Auto-tag
             print("Auto-tagging...")
+            # Extract ingredient names (use standard_name or ingredient_name or original_text)
+            ingredient_names = []
+            for ing in ingredients:
+                name = ing.get('standard_name') or ing.get('ingredient_name') or ing.get('original_text', 'Unknown')
+                if name:
+                    ingredient_names.append(name)
+
             tag_result = self.auto_tagger.tag_with_validation({
                 'title': recipe_data['title'],
                 'description': recipe_data.get('description', ''),
-                'ingredients': [ing['standard_name'] for ing in ingredients],
+                'ingredients': ingredient_names,
                 'instructions_preview': recipe_data.get('instructions_text', '')
             })
 
@@ -484,9 +519,14 @@ class RecipeProcessor:
 
             # Add ingredients
             for ing_data in ingredients:
+                ingredient_id = None
+                if ing_data.get('ingredient_id'):
+                    ingredient_id = uuid.UUID(ing_data['ingredient_id'])
+
                 recipe_ingredient = RecipeIngredient(
                     recipe_id=recipe.id,
-                    ingredient_id=uuid.UUID(ing_data['ingredient_id']),
+                    ingredient_id=ingredient_id,
+                    ingredient_name=ing_data.get('ingredient_name'),
                     quantity=ing_data.get('quantity'),
                     unit=ing_data.get('unit'),
                     original_text=ing_data.get('original_text')
@@ -524,23 +564,31 @@ class RecipeProcessor:
             # Commit all changes
             self.db_session.commit()
 
-            # VECTOR EMBEDDINGS: Create recipe embedding for similarity search
+            # VECTOR EMBEDDINGS: Create recipe embedding for similarity search (BLOCKING)
             print("Creating vector embedding...")
-            try:
-                tags_list = [tag['value'] for tag in tag_result['tags']]
-                embedding_created = self.vector_service.create_recipe_embedding(
-                    recipe_id=int(str(recipe.id).replace('-', ''), 16) % (2**63),  # Convert UUID to int for Qdrant
-                    title=recipe.title,
-                    description=recipe.description or '',
-                    tags=tags_list
-                )
-
-                if embedding_created:
-                    print("✓ Vector embedding created")
+            # Flatten multi-select tag values (some tags can be lists)
+            tags_list = []
+            for tag in tag_result['tags']:
+                value = tag['value']
+                if isinstance(value, list):
+                    # Multi-select tag - add all values
+                    tags_list.extend(value)
                 else:
-                    print("⚠ Failed to create vector embedding (non-blocking)")
-            except Exception as e:
-                print(f"⚠ Vector embedding error (non-blocking): {str(e)}")
+                    # Single value tag
+                    tags_list.append(value)
+
+            embedding_created = self.vector_service.create_recipe_embedding(
+                recipe_id=str(recipe.id),  # Use UUID string directly
+                title=recipe.title,
+                description=recipe.description or '',
+                tags=tags_list
+            )
+
+            if not embedding_created:
+                # CRITICAL: Embedding creation must succeed
+                raise Exception("Failed to create vector embedding - recipe cannot be searched")
+
+            print("✓ Vector embedding created")
 
             print(f"✓ Recipe processed successfully: {recipe.title}")
             print(f"  - {len(ingredients)} ingredients")
@@ -561,31 +609,99 @@ class RecipeProcessor:
         Process a batch of unprocessed raw content
 
         Returns:
-            {"success": X, "failed": Y}
+            {"success": X, "failed": Y, "skipped": Z}
         """
-        # Find unprocessed raw content
+        # Find unprocessed raw content (newest first)
+        # Filter out items with empty/failed extraction (no metadata or empty manual data)
+        # Also skip items that have failed too many times or are marked as permanently failed
         processed_ids = self.db_session.query(Recipe.scraped_content_id).distinct()
-        unprocessed = self.db_session.query(RawScrapedContent).filter(
-            ~RawScrapedContent.id.in_(processed_ids)
-        ).limit(limit).all()
 
-        print(f"Found {len(unprocessed)} unprocessed recipes")
+        # Get candidates (more than limit to account for filtering)
+        # Skip items with 3+ failed attempts or marked as permanently failed
+        candidates = self.db_session.query(RawScrapedContent).filter(
+            ~RawScrapedContent.id.in_(processed_ids),
+            RawScrapedContent.raw_html != None,  # Must have HTML
+            RawScrapedContent.processing_attempts < 3,  # Skip items that failed 3+ times
+            RawScrapedContent.processing_failed_at == None  # Skip permanently failed items
+        ).order_by(RawScrapedContent.scraped_at.desc()).limit(limit * 2).all()
 
-        results = {"success": 0, "failed": 0}
+        # Filter out items with empty extraction data
+        unprocessed = []
+        skipped_count = 0
+        for item in candidates:
+            if len(unprocessed) >= limit:
+                break
+
+            metadata = item.raw_metadata_json or {}
+
+            # Check if has extractable data
+            has_schema = bool(metadata.get('schema_org', {}).get('name'))
+            has_rs = bool(metadata.get('recipe_scrapers', {}).get('title'))
+            manual = metadata.get('manual', {})
+            has_manual = bool(manual.get('title') or manual.get('ingredients') or manual.get('instructions'))
+
+            # Skip if no extractable data (empty manual or no data at all)
+            if not has_schema and not has_rs and not has_manual:
+                print(f"Skipping {item.source_url[:80]}... - no extractable data")
+                skipped_count += 1
+                # Mark as permanently failed if it's a category/index page
+                if item.processing_attempts == 0:
+                    item.processing_attempts = 3
+                    item.processing_failed_at = datetime.utcnow()
+                    item.processing_error = "No extractable recipe data (likely category/index page)"
+                    self.db_session.commit()
+                continue
+
+            unprocessed.append(item)
+
+        print(f"Found {len(unprocessed)} unprocessed recipes (skipped {skipped_count} invalid pages)")
+
+        results = {"success": 0, "failed": 0, "skipped": 0}
 
         for raw_content in unprocessed:
             print(f"\nProcessing: {raw_content.source_url}")
-            recipe_id = self.process_recipe(raw_content.id)
 
-            if recipe_id:
-                results["success"] += 1
-            else:
+            # Increment attempt counter
+            raw_content.processing_attempts += 1
+            self.db_session.commit()
+
+            try:
+                recipe_id = self.process_recipe(raw_content.id)
+
+                if recipe_id:
+                    results["success"] += 1
+                    # Reset attempts on success
+                    raw_content.processing_attempts = 0
+                    raw_content.processing_error = None
+                    self.db_session.commit()
+                else:
+                    results["failed"] += 1
+                    # Mark as permanently failed if this was the 3rd attempt
+                    if raw_content.processing_attempts >= 3:
+                        raw_content.processing_failed_at = datetime.utcnow()
+                        raw_content.processing_error = "Failed validation or extraction after 3 attempts"
+                        print(f"  ✗ Marked as permanently failed (3+ attempts)")
+                    self.db_session.commit()
+
+            except Exception as e:
                 results["failed"] += 1
+                error_msg = str(e)[:500]  # Truncate long errors
+                raw_content.processing_error = error_msg
+
+                # Mark as permanently failed if this was the 3rd attempt
+                if raw_content.processing_attempts >= 3:
+                    raw_content.processing_failed_at = datetime.utcnow()
+                    print(f"  ✗ Marked as permanently failed (3+ attempts): {error_msg}")
+                else:
+                    print(f"  ✗ Processing failed (attempt {raw_content.processing_attempts}/3): {error_msg}")
+
+                self.db_session.commit()
 
         print("\n" + "=" * 50)
         print(f"Batch processing complete!")
         print(f"Success: {results['success']}")
         print(f"Failed: {results['failed']}")
+        print(f"Skipped: {results['skipped']}")
         print("=" * 50)
 
         return results

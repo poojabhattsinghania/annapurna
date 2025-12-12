@@ -4,14 +4,18 @@ from typing import List, Dict, Optional, Tuple
 import uuid
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, PointStruct, Filter, FieldCondition, MatchValue
+import google.generativeai as genai
 from annapurna.config import settings
+
+# Configure Gemini for embedding generation
+genai.configure(api_key=settings.gemini_api_key)
 
 
 class QdrantVectorDB:
     """Client for managing recipe embeddings in Qdrant"""
 
     COLLECTION_NAME = "recipe_embeddings"
-    VECTOR_SIZE = 384  # all-MiniLM-L6-v2 embedding dimension
+    VECTOR_SIZE = 768  # Gemini text-embedding-004 dimension
 
     def __init__(self):
         """Initialize Qdrant client"""
@@ -32,6 +36,96 @@ class QdrantVectorDB:
                 )
             )
             print(f"Created Qdrant collection: {self.COLLECTION_NAME}")
+
+    def generate_embedding(self, text: str) -> Optional[List[float]]:
+        """
+        Generate embedding for given text using Gemini
+
+        Args:
+            text: Text to embed (recipe title + description + tags)
+
+        Returns:
+            List of floats representing the 768-dimensional embedding vector
+        """
+        try:
+            result = genai.embed_content(
+                model="models/text-embedding-004",
+                content=text,
+                task_type="retrieval_document",
+                title="Recipe Embedding"
+            )
+            return result['embedding']
+        except Exception as e:
+            print(f"Error generating embedding: {e}")
+            return None
+
+    def create_recipe_embedding(
+        self,
+        recipe_id: str,
+        title: str,
+        description: str,
+        tags: List[str] = None
+    ) -> bool:
+        """
+        Generate and store embedding for a recipe (combines generation + storage)
+
+        Args:
+            recipe_id: Unique recipe ID (UUID string)
+            title: Recipe title
+            description: Recipe description
+            tags: Optional list of tag values (all strings, multi-select tags should be flattened)
+
+        Returns:
+            True if successful, False otherwise
+        """
+        # Validate that all tags are strings
+        if tags:
+            for i, tag in enumerate(tags):
+                if not isinstance(tag, str):
+                    print(f"⚠️  Warning: Tag at index {i} is not a string: {tag} (type: {type(tag)})")
+                    print(f"   Tag list: {tags}")
+                    return False
+
+        # Combine title, description, and tags for embedding
+        tags_str = ", ".join(tags) if tags else ""
+        text_to_embed = f"{title}. {description}. Tags: {tags_str}"
+
+        # Generate embedding using Gemini
+        print(f"  Generating embedding for: {title[:50]}...")
+        embedding = self.generate_embedding(text_to_embed)
+
+        if not embedding:
+            print(f"  ✗ Failed to generate embedding for recipe: {title}")
+            return False
+
+        # Store in Qdrant
+        try:
+            point_id = str(uuid.uuid4())  # Generate UUID for Qdrant point ID
+
+            self.client.upsert(
+                collection_name=self.COLLECTION_NAME,
+                points=[
+                    PointStruct(
+                        id=point_id,  # Qdrant point ID (internal)
+                        vector=embedding,
+                        payload={
+                            "recipe_id": recipe_id,  # Recipe UUID (for lookups)
+                            "title": title,
+                            "description": description,
+                            "tags": tags or []
+                        }
+                    )
+                ]
+            )
+            print(f"  ✓ Stored embedding in Qdrant (recipe_id: {recipe_id[:8]}...)")
+            return True
+        except Exception as e:
+            print(f"  ✗ Error storing embedding in Qdrant: {e}")
+            print(f"     Recipe: {title}")
+            print(f"     Tags: {tags}")
+            import traceback
+            traceback.print_exc()
+            return False
 
     def upsert_embedding(
         self,

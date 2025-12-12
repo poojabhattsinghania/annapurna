@@ -4,29 +4,36 @@ A high-fidelity, semantic search-powered recipe database for Indian cuisine with
 
 ## Features
 
-- **Semantic Search**: Vector-based search using pgvector for intelligent recipe discovery
+- **Semantic Search**: Hybrid search using Qdrant vector database + PostgreSQL filters
 - **Multi-Dimensional Taxonomy**: Rich tagging system covering taste, texture, health, dietary constraints, and context
 - **Extensible Architecture**: Add new creators, categories, and tag dimensions without schema migrations
 - **Duplicate Handling**: Intelligent clustering of recipe variants from different sources
 - **Dietary Logic Gates**: Auto-computed tags for Jain, Vrat, Diabetic-friendly, and other dietary needs
 - **Raw Data Preservation**: All scraped content stored immutably for re-processing
+- **Cloudflare Bypass**: Advanced scraping with cloudscraper for protected websites
 
 ## Tech Stack
 
 - **Backend**: Python 3.11+, FastAPI
-- **Database**: PostgreSQL 15+ with pgvector extension
+- **Database**: PostgreSQL 15 (structured data) + Qdrant (vector embeddings)
 - **ORM**: SQLAlchemy 2.0
 - **Migrations**: Alembic
-- **LLM**: Google Gemini 2.0 Flash (primary), OpenAI GPT-4o-mini (fallback)
-- **Embeddings**: sentence-transformers (all-MiniLM-L6-v2)
+- **LLM**: Google Gemini 2.0 Flash (processing + embeddings)
+- **Embeddings**: Gemini text-embedding-004 (768-dimensional)
 - **Task Queue**: Celery with Redis
-- **Scraping**: youtube-transcript-api, recipe-scrapers, BeautifulSoup
+- **Scraping**: youtube-transcript-api, recipe-scrapers, BeautifulSoup, cloudscraper
+- **Containerization**: Docker + Docker Compose
 
 ## Project Structure
 
 ```
 annapurna/
 ├── api/                 # FastAPI endpoints
+│   ├── search.py       # Hybrid semantic + SQL search
+│   ├── recipes.py      # Recipe CRUD endpoints
+│   ├── processing.py   # Recipe processing endpoints
+│   ├── scraping.py     # Scraping endpoints
+│   └── ...
 ├── models/              # SQLAlchemy models
 │   ├── base.py         # Database setup
 │   ├── content.py      # Content creators & categories
@@ -34,10 +41,24 @@ annapurna/
 │   ├── recipe.py       # Recipe data & relationships
 │   └── taxonomy.py     # Tag dimensions & ingredients master
 ├── scraper/            # Web scraping modules
+│   ├── web.py          # Website scraper
+│   ├── cloudflare_web.py  # Cloudflare bypass scraper
+│   └── youtube.py      # YouTube scraper
 ├── normalizer/         # LLM processing pipeline
-├── utils/              # Utilities & seed data
-├── migrations/         # Alembic migrations
-└── tests/              # Test suites
+│   ├── recipe_processor.py  # Main processing logic
+│   └── ingredient_parser.py # Ingredient normalization
+├── tasks/              # Celery tasks
+│   ├── scraping.py     # Scraping tasks
+│   └── processing.py   # Processing tasks
+├── utils/              # Utilities & helpers
+│   ├── qdrant_client.py     # Qdrant vector DB client
+│   ├── embeddings.py        # Embedding generation
+│   └── seed_database.py     # Database seeding
+└── services/           # Business logic
+    └── data_validation.py   # Recipe quality checks
+
+scripts/                # Standalone utility scripts
+docs/                   # Documentation
 ```
 
 ## Setup
@@ -69,7 +90,8 @@ See [DOCKER.md](./DOCKER.md) for detailed Docker documentation.
 #### Prerequisites
 
 - Python 3.11+
-- PostgreSQL 15+ with pgvector extension
+- PostgreSQL 15+
+- Qdrant (vector database)
 - Redis (for Celery)
 
 #### Installation
@@ -90,11 +112,13 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-4. Set up PostgreSQL with pgvector:
-```sql
-CREATE DATABASE annapurna;
-\c annapurna
-CREATE EXTENSION vector;
+4. Set up PostgreSQL and Qdrant:
+```bash
+# PostgreSQL
+createdb annapurna
+
+# Qdrant (using Docker)
+docker run -p 6333:6333 qdrant/qdrant
 ```
 
 5. Configure environment variables:
@@ -113,28 +137,42 @@ alembic upgrade head
 python -m annapurna.utils.seed_database
 ```
 
-## Database Schema
+## Database Architecture
 
-### Core Tables
+### PostgreSQL (Structured Data)
 
+**Core Tables:**
 - **raw_scraped_content**: Immutable source of truth for all scraped data
-- **recipes**: Processed recipe data with embeddings
+- **recipes**: Processed recipe data (title, description, times, servings, nutrition)
+- **recipe_ingredients**: Normalized ingredients with quantities
+- **recipe_steps**: Step-by-step cooking instructions
+- **recipe_tags**: Multi-dimensional tags (auto-generated via LLM)
 - **recipe_clusters**: Groups of similar recipes
 - **recipe_similarity**: Pairwise similarity scores
-- **recipe_tags**: Multi-dimensional tags
-- **recipe_ingredients**: Normalized ingredients
-- **recipe_steps**: Step-by-step instructions
 
-### Taxonomy Tables
+**Taxonomy Tables:**
+- **tag_dimensions**: Meta-schema for extensible tagging (vibe, health, context)
+- **ingredients_master**: Standardized ingredients with Hindi names and synonyms
+- **content_creators**: Source vloggers/bloggers/websites
 
-- **tag_dimensions**: Meta-schema for extensible tagging
-- **ingredients_master**: Standardized ingredients with synonyms
-- **content_creators**: Source vloggers/bloggers
-- **content_categories**: Hierarchical recipe categories
-
-### Logging
-
+**Logging:**
 - **scraping_logs**: Success/failure tracking for all scrape attempts
+
+### Qdrant (Vector Embeddings)
+
+**Collection:** `recipe_embeddings`
+- **Vector Size**: 768 dimensions (Gemini text-embedding-004)
+- **Distance**: Cosine similarity
+- **Payload**: recipe_id, title, description, tags
+- **Purpose**: Fast semantic search across recipes
+
+## Current Statistics
+
+- **Total Recipes**: 26,000+ and growing
+- **Content Creators**: 50+
+- **Ingredient Master**: 500+ standardized ingredients
+- **Vector Embeddings**: Qdrant-based for fast semantic search
+- **Processing Rate**: ~600 recipes/hour (Celery workers)
 
 ## Multi-Dimensional Tag System
 

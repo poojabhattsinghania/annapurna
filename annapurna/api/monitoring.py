@@ -21,6 +21,8 @@ class HealthCheck(BaseModel):
     timestamp: str
     database: str
     redis: str
+    qdrant: str
+    celery: str
 
 
 class SystemMetrics(BaseModel):
@@ -46,7 +48,9 @@ def health_check():
         'version': '1.0.0',
         'timestamp': datetime.utcnow().isoformat(),
         'database': 'unknown',
-        'redis': 'unknown'
+        'redis': 'unknown',
+        'qdrant': 'unknown',
+        'celery': 'unknown'
     }
 
     # Check database
@@ -66,6 +70,35 @@ def health_check():
         health_status['redis'] = 'healthy'
     except Exception as e:
         health_status['redis'] = f'unhealthy: {str(e)}'
+        health_status['status'] = 'degraded'
+
+    # Check Qdrant
+    try:
+        from annapurna.utils.qdrant_client import get_qdrant_client
+        qdrant = get_qdrant_client()
+        if qdrant.health_check():
+            health_status['qdrant'] = 'healthy'
+        else:
+            health_status['qdrant'] = 'unhealthy'
+            health_status['status'] = 'degraded'
+    except Exception as e:
+        health_status['qdrant'] = f'unhealthy: {str(e)}'
+        health_status['status'] = 'degraded'
+
+    # Check Celery
+    try:
+        from celery.app.control import Inspect
+        from annapurna.celery_app import celery_app
+        inspect = Inspect(app=celery_app)
+        active_queues = inspect.active_queues()
+        if active_queues:
+            worker_count = len(active_queues.keys())
+            health_status['celery'] = f'healthy ({worker_count} workers)'
+        else:
+            health_status['celery'] = 'unhealthy: no workers'
+            health_status['status'] = 'degraded'
+    except Exception as e:
+        health_status['celery'] = f'unhealthy: {str(e)}'
         health_status['status'] = 'degraded'
 
     return health_status
