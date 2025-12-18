@@ -8,7 +8,10 @@ import uuid
 
 from annapurna.config import settings
 from annapurna.models.base import get_db
-from annapurna.api import recipes, search, scraping, processing, tasks, cache_management, monitoring, feedback, recommendations, nutrition
+from annapurna.api import (
+    recipes, search, scraping, processing, tasks, cache_management,
+    monitoring, feedback, recommendations, nutrition, onboarding, interactions, taste_profile, mobile
+)
 
 # Create FastAPI app
 app = FastAPI(
@@ -45,6 +48,10 @@ app.include_router(monitoring.router, prefix=f"/{settings.api_version}/monitorin
 app.include_router(feedback.router, prefix=f"/{settings.api_version}/feedback", tags=["Feedback"])
 app.include_router(recommendations.router, prefix=f"/{settings.api_version}/recommendations", tags=["Recommendations"])
 app.include_router(nutrition.router, prefix=f"/{settings.api_version}/nutrition", tags=["Nutrition"])
+app.include_router(onboarding.router, prefix=f"/{settings.api_version}/onboarding", tags=["Onboarding"])
+app.include_router(interactions.router, prefix=f"/{settings.api_version}/interactions", tags=["Interactions"])
+app.include_router(taste_profile.router, prefix=f"/{settings.api_version}/taste-profile", tags=["Taste Profile"])
+app.include_router(mobile.router)  # Mobile API has its own prefix defined
 
 
 if __name__ == "__main__":
