@@ -195,17 +195,25 @@ class HybridSearch:
         if not qdrant_results:
             return [], 0
 
-        # Get recipe IDs from Qdrant results (filter out invalid UUIDs)
+        # Get recipe IDs from Qdrant results (filter out invalid UUIDs and deduplicate)
         import uuid
         valid_recipe_ids = []
+        seen_ids = set()
+
         for result in qdrant_results:
             rid = result["recipe_id"]
             try:
                 # Try to convert to UUID (handles both string UUIDs and valid formats)
+                recipe_uuid = None
                 if isinstance(rid, str):
-                    valid_recipe_ids.append(uuid.UUID(rid))
+                    recipe_uuid = uuid.UUID(rid)
                 elif isinstance(rid, uuid.UUID):
-                    valid_recipe_ids.append(rid)
+                    recipe_uuid = rid
+
+                # Only add if not seen before (deduplicate)
+                if recipe_uuid and str(recipe_uuid) not in seen_ids:
+                    valid_recipe_ids.append(recipe_uuid)
+                    seen_ids.add(str(recipe_uuid))
                 # Skip integers and other invalid formats
             except (ValueError, AttributeError):
                 continue
@@ -222,8 +230,13 @@ class HybridSearch:
         query = self.apply_sql_filters(query, filters)
         filtered_recipes = query.all()
 
-        # Map recipe_id to score from Qdrant
-        score_map = {result["recipe_id"]: result["score"] for result in qdrant_results}
+        # Map recipe_id to BEST score from Qdrant (in case of duplicates, keep highest)
+        score_map = {}
+        for result in qdrant_results:
+            rid = result["recipe_id"]
+            score = result["score"]
+            if rid not in score_map or score > score_map[rid]:
+                score_map[rid] = score
 
         # Create scored results with recipes that passed filters
         scored_results = []

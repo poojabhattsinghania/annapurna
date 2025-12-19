@@ -5,6 +5,7 @@ import uuid
 from datetime import datetime
 from typing import Optional, Dict, List
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 from slugify import slugify
 
 from annapurna.normalizer.ingredient_parser import IngredientParser
@@ -59,6 +60,19 @@ class RecipeProcessor:
         # Combine transcript and description for ingredient/instruction extraction
         full_text = f"{description}\n\n{transcript}"
 
+        # Extract video ID and thumbnail
+        video_id = metadata.get('video_id')
+        youtube_video_url = raw_content.source_url
+
+        # Get thumbnail URL (prefer maxresdefault)
+        all_thumbnails = video_metadata.get('all_thumbnails', {})
+        thumbnail_url = (
+            all_thumbnails.get('maxresdefault') or
+            all_thumbnails.get('sddefault') or
+            video_metadata.get('thumbnail_url') or
+            f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg" if video_id else None
+        )
+
         return {
             'title': title,
             'description': description,
@@ -66,8 +80,18 @@ class RecipeProcessor:
             'ingredients_text': full_text,  # Will be parsed by LLM
             'instructions_text': transcript,  # Instructions usually in transcript
             'source_type': 'youtube',
-            'video_id': metadata.get('video_id'),
-            'channel': video_metadata.get('channel_title')
+            'video_id': video_id,
+            'channel': video_metadata.get('channel_title'),
+            # Image/video data
+            'youtube_video_id': video_id,
+            'youtube_video_url': youtube_video_url,
+            'primary_image_url': thumbnail_url,
+            'thumbnail_url': thumbnail_url,
+            'image_metadata': {
+                'source': 'youtube_thumbnail',
+                'all_thumbnails': all_thumbnails,
+                'scraped_at': datetime.utcnow().isoformat()
+            }
         }
 
     def _extract_from_website(self, raw_content: RawScrapedContent, metadata: Dict) -> Dict:
@@ -85,6 +109,11 @@ class RecipeProcessor:
             if any(marker in html_start for marker in [b'JFIF', b'\x89PNG', b'GIF89', b'GIF87', b'\xff\xd8\xff']):
                 print(f"⚠️  Invalid HTML (binary image data) - skipping: {raw_content.source_url}")
                 return {}
+
+        # Extract image data from metadata (added by scraper)
+        images_data = metadata.get('images', {})
+        primary_image_url = images_data.get('primary_image_url')
+        image_metadata = images_data.get('image_metadata', {})
 
         # Prefer Schema.org data (most reliable) - but only if complete
         if 'schema_org' in metadata:
@@ -110,7 +139,10 @@ class RecipeProcessor:
                     # NEW: Include raw schema.org data for quality-aware processing
                     'has_schema_org': True,
                     'schema_ingredients': schema.get('recipeIngredient', []),
-                    'schema_instructions': schema.get('recipeInstructions', [])
+                    'schema_instructions': schema.get('recipeInstructions', []),
+                    # Image data
+                    'primary_image_url': primary_image_url,
+                    'image_metadata': image_metadata
                 }
             else:
                 # Incomplete Schema.org - fall back to recipe-scrapers
@@ -127,7 +159,10 @@ class RecipeProcessor:
                 'total_time': rs.get('total_time'),
                 'servings': rs.get('yields'),
                 'source_type': 'website',
-                'author': rs.get('author')
+                'author': rs.get('author'),
+                # Image data
+                'primary_image_url': primary_image_url,
+                'image_metadata': image_metadata
             }
 
         # Fallback to manual extraction
@@ -138,7 +173,10 @@ class RecipeProcessor:
                 'description': '',
                 'ingredients_text': '\n'.join(manual.get('ingredients', [])),
                 'instructions_text': '\n'.join(manual.get('instructions', [])),
-                'source_type': 'website'
+                'source_type': 'website',
+                # Image data
+                'primary_image_url': primary_image_url,
+                'image_metadata': image_metadata
             }
 
         return {}
@@ -384,7 +422,7 @@ class RecipeProcessor:
                 print(f"Raw content {raw_content_id} not found")
                 return None
 
-            # Check if already processed
+            # Check if already processed (by scraped_content_id)
             existing = self.db_session.query(Recipe).filter_by(
                 scraped_content_id=raw_content_id
             ).first()
@@ -392,6 +430,15 @@ class RecipeProcessor:
             if existing:
                 print(f"Recipe already processed: {existing.title}")
                 return existing.id
+
+            # Check if recipe from same source_url already exists (deduplication)
+            existing_by_url = self.db_session.query(Recipe).filter_by(
+                source_url=raw_content.source_url
+            ).first()
+
+            if existing_by_url:
+                print(f"Recipe from same URL already exists: {existing_by_url.title} (URL: {raw_content.source_url})")
+                return existing_by_url.id
 
             # Extract data
             print("Extracting recipe data...")
@@ -510,6 +557,13 @@ class RecipeProcessor:
                 cook_time_minutes=recipe_data.get('cook_time') or time_estimates.get('cook_time_minutes'),
                 total_time_minutes=recipe_data.get('total_time') or time_estimates.get('total_time_minutes'),
                 servings=self._parse_servings(recipe_data.get('servings')),
+                # Image/video fields
+                primary_image_url=recipe_data.get('primary_image_url'),
+                thumbnail_url=recipe_data.get('thumbnail_url'),
+                youtube_video_id=recipe_data.get('youtube_video_id'),
+                youtube_video_url=recipe_data.get('youtube_video_url'),
+                image_metadata=recipe_data.get('image_metadata'),
+                # Processing metadata
                 processed_at=datetime.utcnow(),
                 llm_model_version='gemini-2.0-flash'  # Using Flash for tagging, Flash-8b for parsing
             )
@@ -562,7 +616,21 @@ class RecipeProcessor:
                     self.db_session.add(recipe_tag)
 
             # Commit all changes
-            self.db_session.commit()
+            try:
+                self.db_session.commit()
+            except IntegrityError as e:
+                self.db_session.rollback()
+                # Check if it's a duplicate source_url constraint violation
+                if 'uq_recipes_source_url' in str(e) or 'source_url' in str(e):
+                    print(f"✗ Recipe with this URL already exists, skipping: {raw_content.source_url}")
+                    # Return the existing recipe ID
+                    existing_recipe = self.db_session.query(Recipe).filter_by(
+                        source_url=raw_content.source_url
+                    ).first()
+                    return existing_recipe.id if existing_recipe else None
+                else:
+                    # Re-raise if it's a different integrity error
+                    raise
 
             # VECTOR EMBEDDINGS: Create recipe embedding for similarity search (BLOCKING)
             print("Creating vector embedding...")

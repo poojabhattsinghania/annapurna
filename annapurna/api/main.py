@@ -10,7 +10,7 @@ from annapurna.config import settings
 from annapurna.models.base import get_db
 from annapurna.api import (
     recipes, search, scraping, processing, tasks, cache_management,
-    monitoring, feedback, recommendations, nutrition, onboarding, interactions, taste_profile, mobile
+    monitoring, feedback, recommendations, nutrition, onboarding, interactions, taste_profile, mobile, auth
 )
 
 # Create FastAPI app
@@ -52,6 +52,7 @@ app.include_router(onboarding.router, prefix=f"/{settings.api_version}/onboardin
 app.include_router(interactions.router, prefix=f"/{settings.api_version}/interactions", tags=["Interactions"])
 app.include_router(taste_profile.router, prefix=f"/{settings.api_version}/taste-profile", tags=["Taste Profile"])
 app.include_router(mobile.router)  # Mobile API has its own prefix defined
+app.include_router(auth.router)  # Auth API has its own prefix defined
 
 
 if __name__ == "__main__":

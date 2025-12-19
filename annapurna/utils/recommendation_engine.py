@@ -10,6 +10,7 @@ import numpy as np
 from annapurna.models.recipe import Recipe, RecipeTag
 from annapurna.models.user_preferences import UserProfile, RecipeRecommendation
 from annapurna.models.feedback import RecipeFeedback, RecipeRating
+from annapurna.models.taxonomy import TagDimension
 from annapurna.utils.cache import cached
 
 
@@ -201,15 +202,18 @@ class RecommendationEngine:
 
         # Query base recipes
         query = self.db.query(Recipe).filter(
-            Recipe.is_processed == True,
+            Recipe.processed_at.isnot(None),
             Recipe.embedding.isnot(None)
         )
 
+        # Get tag dimension
+        meal_slot_dim = self.db.query(TagDimension).filter_by(dimension_name="context_meal_slot").first()
+
         # Filter by meal slot if specified
-        if meal_slot:
+        if meal_slot and meal_slot_dim:
             query = query.join(RecipeTag).filter(
                 and_(
-                    RecipeTag.tag_dimension == 'meal_slot',
+                    RecipeTag.tag_dimension_id == meal_slot_dim.id,
                     RecipeTag.tag_value == meal_slot
                 )
             )
@@ -274,14 +278,20 @@ class RecommendationEngine:
         if not target_categories:
             return []
 
+        # Get tag dimension
+        dish_type_dim = self.db.query(TagDimension).filter_by(dimension_name="context_dish_type").first()
+
         # Query complementary recipes
-        complements = self.db.query(Recipe).join(RecipeTag).filter(
-            and_(
-                Recipe.is_processed == True,
-                RecipeTag.tag_dimension == 'dish_type',
-                RecipeTag.tag_value.in_(target_categories)
-            )
-        ).distinct().all()
+        if dish_type_dim:
+            complements = self.db.query(Recipe).join(RecipeTag).filter(
+                and_(
+                    Recipe.processed_at.isnot(None),
+                    RecipeTag.tag_dimension_id == dish_type_dim.id,
+                    RecipeTag.tag_value.in_(target_categories)
+                )
+            ).distinct().all()
+        else:
+            complements = []
 
         # Score and rank
         recommendations = []

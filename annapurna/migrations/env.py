@@ -18,7 +18,9 @@ from annapurna.config import settings
 config = context.config
 
 # Override sqlalchemy.url with our config
-config.set_main_option("sqlalchemy.url", settings.database_url)
+# Replace % with %% to escape for ConfigParser
+escaped_url = settings.database_url.replace('%', '%%')
+config.set_main_option("sqlalchemy.url", escaped_url)
 
 # Interpret the config file for Python logging.
 if config.config_file_name is not None:

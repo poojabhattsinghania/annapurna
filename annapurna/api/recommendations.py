@@ -10,6 +10,8 @@ from annapurna.models.base import get_db
 from annapurna.models.user_preferences import UserProfile, MealPlan, RecipeRecommendation
 from annapurna.models.recipe import Recipe
 from annapurna.utils.recommendation_engine import RecommendationEngine
+from annapurna.services.first_recommendations_service import FirstRecommendationsService
+from annapurna.services.llm_recommendations_service import LLMRecommendationsService
 
 router = APIRouter()
 
@@ -171,6 +173,143 @@ def get_personalized_recommendations(
         )
 
     return recommendations
+
+
+@router.get("/next-meal")
+def get_next_meal_recommendations(
+    user_id: str,
+    meal_type: Optional[str] = Query(None, description="Override meal type: breakfast, lunch, snack, dinner (auto-detects if not provided)"),
+    include_pantry: bool = Query(False, description="Include pantry-based recommendations"),
+    pantry_ingredients: Optional[List[str]] = Query(None, description="List of available ingredients"),
+    db: Session = Depends(get_db)
+):
+    """
+    Get time-aware recommendations for next meal
+
+    **NEW**: Auto-detects current meal based on time of day!
+
+    Time-based defaults:
+    - 5am-11am: Breakfast
+    - 11am-4pm: Lunch
+    - 4pm-6pm: Snack
+    - 6pm-5am: Dinner
+
+    Returns 5-10 highly relevant recipes specifically for the detected/specified meal.
+    """
+
+    try:
+        llm_service = LLMRecommendationsService(db)
+        recommendations = llm_service.generate_next_meal_recommendations(
+            user_id=user_id,
+            meal_type=meal_type,
+            include_pantry=include_pantry,
+            pantry_ingredients=pantry_ingredients
+        )
+
+        # Determine actual meal type used
+        from datetime import datetime
+        if meal_type is None:
+            current_hour = datetime.now().hour
+            if 5 <= current_hour < 11:
+                detected_meal = 'breakfast'
+            elif 11 <= current_hour < 16:
+                detected_meal = 'lunch'
+            elif 16 <= current_hour < 18:
+                detected_meal = 'snack'
+            else:
+                detected_meal = 'dinner'
+        else:
+            detected_meal = meal_type
+
+        return {
+            'status': 'success',
+            'meal_type': detected_meal,
+            'current_time': datetime.now().strftime('%I:%M %p'),
+            'total_recommendations': len(recommendations),
+            'recommendations': recommendations,
+            'note': f'Time-aware recommendations for {detected_meal} curated by Gemini AI'
+        }
+
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error generating recommendations: {str(e)}")
+
+
+@router.get("/first")
+def get_first_recommendations(
+    user_id: str,
+    include_pantry: bool = Query(False, description="Include pantry-based recommendations"),
+    pantry_ingredients: Optional[List[str]] = Query(None, description="List of available ingredients"),
+    use_llm: bool = Query(True, description="Use LLM-enhanced curation (recommended)"),
+    db: Session = Depends(get_db)
+):
+    """
+    Get first 15 recommendations after onboarding - LLM-curated strategic approach
+
+    **NEW**: Now uses Gemini LLM to intelligently curate recipes based on your complete taste profile!
+
+    Strategy:
+    - Cards 1-5: High confidence matches (exploitation)
+    - Cards 6-8: Validated dimensions from taste profile
+    - Cards 9-11: Adjacent regions (exploration)
+    - Cards 12-13: Safe universals
+    - Cards 14-15: Pantry-based or weeknight-friendly
+
+    Expected >70% acceptance rate on first 5 cards
+    """
+
+    try:
+        if use_llm:
+            # Use NEW LLM-enhanced service
+            llm_service = LLMRecommendationsService(db)
+            recommendations = llm_service.generate_first_recommendations_with_llm(
+                user_id=user_id,
+                include_pantry=include_pantry,
+                pantry_ingredients=pantry_ingredients
+            )
+
+            return {
+                'status': 'success',
+                'method': 'llm_curated',
+                'total_recommendations': len(recommendations),
+                'recommendations': recommendations,
+                'strategy_breakdown': {
+                    'cards_1_5': 'High confidence matches (LLM-verified)',
+                    'cards_6_8': 'Validated dimensions',
+                    'cards_9_11': 'Adjacent regions',
+                    'cards_12_13': 'Safe universals',
+                    'cards_14_15': 'Pantry or weeknight' if include_pantry else 'Weeknight-friendly'
+                },
+                'note': 'Recommendations curated by Gemini AI based on your complete taste profile'
+            }
+        else:
+            # Fallback to legacy service
+            service = FirstRecommendationsService(db)
+            recommendations = service.generate_first_recommendations(
+                user_id=user_id,
+                include_pantry=include_pantry,
+                pantry_ingredients=pantry_ingredients
+            )
+
+            return {
+                'status': 'success',
+                'method': 'vector_based',
+                'total_recommendations': len(recommendations),
+                'recommendations': recommendations,
+                'strategy_breakdown': {
+                    'cards_1_5': 'High confidence matches',
+                    'cards_6_8': 'Validated dimensions',
+                    'cards_9_11': 'Adjacent regions',
+                    'cards_12_13': 'Safe universals',
+                    'cards_14_15': 'Pantry or seasonal'
+                }
+            }
+
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error generating recommendations: {str(e)}")
 
 
 @router.get("/complementary/{recipe_id}", response_model=List[ComplementaryDishResponse])

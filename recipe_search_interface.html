@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Recipe Search - Annapurna</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 40px;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+
+        .search-box {
+            background: white;
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+            margin-bottom: 30px;
+        }
+
+        .search-input-wrapper {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+
+        #searchInput {
+            flex: 1;
+            padding: 15px 20px;
+            font-size: 16px;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            outline: none;
+            transition: border-color 0.3s;
+        }
+
+        #searchInput:focus {
+            border-color: #667eea;
+        }
+
+        #searchBtn {
+            padding: 15px 40px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        #searchBtn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        #searchBtn:active {
+            transform: translateY(0);
+        }
+
+        #searchBtn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .search-info {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 14px;
+            color: #666;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: white;
+            font-size: 18px;
+        }
+
+        .spinner {
+            border: 3px solid rgba(255, 255, 255, 0.3);
+            border-top: 3px solid white;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .results {
+            display: grid;
+            gap: 20px;
+        }
+
+        .recipe-card {
+            background: white;
+            padding: 25px;
+            border-radius: 15px;
+            box-shadow: 0 5px 20px rgba(0, 0, 0, 0.1);
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .recipe-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
+        }
+
+        .recipe-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: start;
+            margin-bottom: 15px;
+        }
+
+        .recipe-title {
+            font-size: 1.5em;
+            color: #333;
+            margin-bottom: 5px;
+            flex: 1;
+        }
+
+        .relevance-badge {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 0.85em;
+            font-weight: 600;
+            white-space: nowrap;
+            margin-left: 15px;
+        }
+
+        .recipe-creator {
+            color: #666;
+            font-size: 0.9em;
+            margin-bottom: 15px;
+        }
+
+        .recipe-description {
+            color: #555;
+            line-height: 1.6;
+            margin-bottom: 15px;
+        }
+
+        .recipe-meta {
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+            padding-top: 15px;
+            border-top: 1px solid #e0e0e0;
+        }
+
+        .meta-item {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            color: #666;
+            font-size: 0.9em;
+        }
+
+        .meta-item::before {
+            content: '•';
+            color: #667eea;
+            font-weight: bold;
+            font-size: 1.2em;
+        }
+
+        .no-results {
+            text-align: center;
+            padding: 60px 20px;
+            background: white;
+            border-radius: 15px;
+            color: #666;
+        }
+
+        .no-results h3 {
+            font-size: 1.5em;
+            margin-bottom: 10px;
+            color: #333;
+        }
+
+        .error {
+            background: #fee;
+            border: 1px solid #fcc;
+            color: #c33;
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+
+        .example-queries {
+            color: #666;
+            font-size: 0.9em;
+            margin-top: 10px;
+        }
+
+        .example-queries span {
+            color: #667eea;
+            cursor: pointer;
+            text-decoration: underline;
+        }
+
+        .example-queries span:hover {
+            color: #764ba2;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🍛 Recipe Search</h1>
+            <p>Ask me anything about recipes!</p>
+        </div>
+
+        <div class="search-box">
+            <div class="search-input-wrapper">
+                <input
+                    type="text"
+                    id="searchInput"
+                    placeholder="e.g., Quick vegetarian dinner under 30 minutes"
+                    autocomplete="off"
+                >
+                <button id="searchBtn">Search</button>
+            </div>
+            <div class="search-info">
+                <span id="resultCount"></span>
+                <div class="example-queries">
+                    Try:
+                    <span onclick="searchExample('healthy breakfast recipes')">healthy breakfast</span>,
+                    <span onclick="searchExample('spicy Indian curry')">spicy curry</span>,
+                    <span onclick="searchExample('dessert with chocolate')">chocolate dessert</span>
+                </div>
+            </div>
+        </div>
+
+        <div id="error" class="error" style="display: none;"></div>
+        <div id="loading" class="loading" style="display: none;">
+            <div class="spinner"></div>
+            Searching recipes...
+        </div>
+        <div id="results" class="results"></div>
+    </div>
+
+    <script>
+        const API_URL = 'http://localhost:8000/v1/search';
+        const searchInput = document.getElementById('searchInput');
+        const searchBtn = document.getElementById('searchBtn');
+        const resultsDiv = document.getElementById('results');
+        const loadingDiv = document.getElementById('loading');
+        const errorDiv = document.getElementById('error');
+        const resultCount = document.getElementById('resultCount');
+
+        // Search on Enter key
+        searchInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                search();
+            }
+        });
+
+        // Search on button click
+        searchBtn.addEventListener('click', search);
+
+        function searchExample(query) {
+            searchInput.value = query;
+            search();
+        }
+
+        async function search() {
+            const query = searchInput.value.trim();
+
+            if (!query) {
+                return;
+            }
+
+            // Show loading state
+            loadingDiv.style.display = 'block';
+            resultsDiv.innerHTML = '';
+            errorDiv.style.display = 'none';
+            resultCount.textContent = '';
+            searchBtn.disabled = true;
+
+            try {
+                const response = await fetch(API_URL, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        query: query,
+                        search_type: 'hybrid',
+                        limit: 20,
+                        offset: 0
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const data = await response.json();
+                displayResults(data);
+
+            } catch (error) {
+                console.error('Search error:', error);
+                errorDiv.textContent = `Error: ${error.message}. Make sure the API server is running on port 8000.`;
+                errorDiv.style.display = 'block';
+            } finally {
+                loadingDiv.style.display = 'none';
+                searchBtn.disabled = false;
+            }
+        }
+
+        function displayResults(data) {
+            if (!data.results || data.results.length === 0) {
+                resultsDiv.innerHTML = `
+                    <div class="no-results">
+                        <h3>No recipes found</h3>
+                        <p>Try a different search query or adjust your filters</p>
+                    </div>
+                `;
+                resultCount.textContent = '0 results';
+                return;
+            }
+
+            resultCount.textContent = `${data.total_count} result${data.total_count !== 1 ? 's' : ''} found`;
+
+            resultsDiv.innerHTML = data.results.map(result => {
+                const recipe = result.recipe;
+                const score = Math.round(result.relevance_score * 100);
+
+                return `
+                    <div class="recipe-card">
+                        <div class="recipe-header">
+                            <h2 class="recipe-title">${escapeHtml(recipe.title)}</h2>
+                            <span class="relevance-badge">${score}% match</span>
+                        </div>
+                        <div class="recipe-creator">by ${escapeHtml(recipe.source_creator)}</div>
+                        ${recipe.description ? `<div class="recipe-description">${escapeHtml(recipe.description)}</div>` : ''}
+                        <div class="recipe-meta">
+                            ${recipe.total_time_minutes ? `<div class="meta-item">${recipe.total_time_minutes} mins</div>` : ''}
+                            ${recipe.servings ? `<div class="meta-item">${recipe.servings} servings</div>` : ''}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function escapeHtml(text) {
+            if (!text) return '';
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Focus input on load
+        searchInput.focus();
+    </script>
+</body>
+</html>

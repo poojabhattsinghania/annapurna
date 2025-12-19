@@ -96,6 +96,114 @@ class WebScraper:
             print(f"Error with recipe-scrapers: {str(e)}")
             return None
 
+    def extract_images(self, soup: BeautifulSoup, url: str, schema_data: Optional[Dict] = None, recipe_scrapers_data: Optional[Dict] = None) -> Dict:
+        """
+        Extract images from multiple sources in priority order
+
+        Returns:
+            {
+                'primary_image_url': str,  # Main dish photo
+                'all_images': [str],  # All extracted image URLs
+                'image_metadata': {
+                    'source': str,  # Where image was found
+                    'scraped_at': str,
+                    'alt_text': str,  # Image alt text if available
+                }
+            }
+        """
+        images_data = {
+            'primary_image_url': None,
+            'all_images': [],
+            'image_metadata': {}
+        }
+
+        # Priority 1: Schema.org image field
+        if schema_data and 'image' in schema_data:
+            schema_image = schema_data['image']
+            # Schema.org image can be string or array or object
+            if isinstance(schema_image, str):
+                images_data['primary_image_url'] = schema_image
+                images_data['all_images'].append(schema_image)
+                images_data['image_metadata']['source'] = 'schema_org'
+            elif isinstance(schema_image, list) and len(schema_image) > 0:
+                first_image = schema_image[0]
+                if isinstance(first_image, str):
+                    images_data['primary_image_url'] = first_image
+                elif isinstance(first_image, dict) and 'url' in first_image:
+                    images_data['primary_image_url'] = first_image['url']
+                images_data['all_images'].extend([img if isinstance(img, str) else img.get('url') for img in schema_image if img])
+                images_data['image_metadata']['source'] = 'schema_org'
+            elif isinstance(schema_image, dict) and 'url' in schema_image:
+                images_data['primary_image_url'] = schema_image['url']
+                images_data['all_images'].append(schema_image['url'])
+                images_data['image_metadata']['source'] = 'schema_org'
+
+        # Priority 2: Open Graph image meta tag
+        if not images_data['primary_image_url']:
+            og_image = soup.find('meta', property='og:image')
+            if og_image and og_image.get('content'):
+                images_data['primary_image_url'] = og_image['content']
+                images_data['all_images'].append(og_image['content'])
+                images_data['image_metadata']['source'] = 'og_image'
+
+        # Priority 3: recipe-scrapers library
+        if not images_data['primary_image_url'] and recipe_scrapers_data and recipe_scrapers_data.get('image'):
+            images_data['primary_image_url'] = recipe_scrapers_data['image']
+            images_data['all_images'].append(recipe_scrapers_data['image'])
+            images_data['image_metadata']['source'] = 'recipe_scrapers'
+
+        # Priority 4: Find first suitable image in content
+        if not images_data['primary_image_url']:
+            # Look for images in common recipe containers
+            content_areas = soup.find_all(['article', 'div', 'section'], class_=re.compile('recipe|content|post|entry', re.I))
+
+            for area in content_areas:
+                images = area.find_all('img', src=True)
+                for img in images:
+                    src = img.get('src', '')
+
+                    # Skip small icons, buttons, ads, etc.
+                    if any(skip in src.lower() for skip in ['icon', 'logo', 'ad', 'banner', 'button', 'avatar']):
+                        continue
+
+                    # Get alt text for metadata
+                    alt_text = img.get('alt', '')
+
+                    # Prefer images with recipe-related alt text
+                    if any(keyword in alt_text.lower() for keyword in ['recipe', 'dish', 'food', 'cook']):
+                        images_data['primary_image_url'] = src
+                        images_data['image_metadata']['source'] = 'content_image'
+                        images_data['image_metadata']['alt_text'] = alt_text
+                        break
+
+                if images_data['primary_image_url']:
+                    break
+
+            # If still no image, just take the first reasonable image
+            if not images_data['primary_image_url']:
+                all_images = soup.find_all('img', src=True)
+                for img in all_images:
+                    src = img.get('src', '')
+                    if any(skip in src.lower() for skip in ['icon', 'logo', 'ad', 'banner', 'button', 'avatar']):
+                        continue
+
+                    images_data['primary_image_url'] = src
+                    images_data['image_metadata']['source'] = 'first_image'
+                    images_data['image_metadata']['alt_text'] = img.get('alt', '')
+                    break
+
+        # Convert relative URLs to absolute
+        from urllib.parse import urljoin
+        if images_data['primary_image_url']:
+            images_data['primary_image_url'] = urljoin(url, images_data['primary_image_url'])
+
+        images_data['all_images'] = [urljoin(url, img) for img in images_data['all_images'] if img]
+
+        # Add timestamp
+        images_data['image_metadata']['scraped_at'] = datetime.utcnow().isoformat()
+
+        return images_data
+
     def extract_manual(self, soup: BeautifulSoup) -> Dict:
         """Manual extraction for unsupported sites"""
         # Try to find title
@@ -241,6 +349,12 @@ class WebScraper:
                     db_session, url, "parsing", "Could not extract any recipe data"
                 )
                 return None
+
+            # Extract images (NEW)
+            images_data = self.extract_images(soup, url, schema_data, recipe_scrapers_data)
+            if images_data['primary_image_url']:
+                metadata['images'] = images_data
+                print(f"✓ Extracted images (source: {images_data['image_metadata'].get('source', 'unknown')})")
 
             # Create or update raw scraped content record
             if existing and not existing.raw_html:

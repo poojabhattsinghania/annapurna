@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Recipe Details - Annapurna</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+        .header {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        .header h1 {
+            font-size: 32px;
+            margin-bottom: 10px;
+        }
+        .header .source {
+            font-size: 14px;
+            opacity: 0.9;
+        }
+        .content {
+            padding: 30px;
+        }
+        .section {
+            margin-bottom: 30px;
+        }
+        .section h2 {
+            font-size: 24px;
+            color: #333;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 3px solid #667eea;
+        }
+        .meta-info {
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+            margin-bottom: 20px;
+        }
+        .meta-item {
+            background: #f8f9fa;
+            padding: 10px 20px;
+            border-radius: 10px;
+            font-size: 14px;
+        }
+        .meta-item strong {
+            color: #667eea;
+        }
+        .description {
+            font-size: 16px;
+            line-height: 1.6;
+            color: #555;
+            margin-bottom: 20px;
+        }
+        .ingredients-list {
+            list-style: none;
+        }
+        .ingredients-list li {
+            padding: 10px;
+            margin-bottom: 8px;
+            background: #f8f9fa;
+            border-left: 4px solid #667eea;
+            border-radius: 5px;
+        }
+        .steps-list {
+            list-style: none;
+            counter-reset: step-counter;
+        }
+        .steps-list li {
+            counter-increment: step-counter;
+            padding: 15px;
+            margin-bottom: 15px;
+            background: #f8f9fa;
+            border-radius: 10px;
+            position: relative;
+            padding-left: 60px;
+        }
+        .steps-list li::before {
+            content: counter(step-counter);
+            position: absolute;
+            left: 15px;
+            top: 15px;
+            background: #667eea;
+            color: white;
+            width: 35px;
+            height: 35px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 16px;
+        }
+        .tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        .tag {
+            background: #e7f3ff;
+            color: #0066cc;
+            padding: 8px 15px;
+            border-radius: 20px;
+            font-size: 14px;
+            border: 1px solid #b3d9ff;
+        }
+        .error {
+            background: #fee;
+            color: #c33;
+            padding: 20px;
+            border-radius: 10px;
+            margin: 20px;
+        }
+        .loading {
+            text-align: center;
+            padding: 50px;
+            font-size: 18px;
+            color: #667eea;
+        }
+        .back-link {
+            display: inline-block;
+            margin: 20px 30px;
+            padding: 10px 20px;
+            background: #667eea;
+            color: white;
+            text-decoration: none;
+            border-radius: 8px;
+            transition: background 0.3s;
+        }
+        .back-link:hover {
+            background: #5568d3;
+        }
+        .source-link {
+            display: inline-block;
+            margin-top: 20px;
+            padding: 12px 25px;
+            background: #28a745;
+            color: white;
+            text-decoration: none;
+            border-radius: 8px;
+            font-weight: 600;
+            transition: background 0.3s;
+        }
+        .source-link:hover {
+            background: #218838;
+        }
+    </style>
+</head>
+<body>
+    <a href="javascript:history.back()" class="back-link">← Back to Recommendations</a>
+
+    <div class="container">
+        <div id="loading" class="loading">
+            Loading recipe details...
+        </div>
+        <div id="error" class="error" style="display:none;"></div>
+        <div id="recipe-content" style="display:none;">
+            <div class="header">
+                <h1 id="recipe-title"></h1>
+                <div class="source" id="recipe-source"></div>
+            </div>
+            <div class="content">
+                <div class="meta-info" id="meta-info"></div>
+
+                <div class="section" id="description-section" style="display:none;">
+                    <h2>Description</h2>
+                    <div class="description" id="description"></div>
+                </div>
+
+                <div class="section" id="ingredients-section">
+                    <h2>Ingredients</h2>
+                    <ul class="ingredients-list" id="ingredients"></ul>
+                </div>
+
+                <div class="section" id="steps-section">
+                    <h2>Instructions</h2>
+                    <ol class="steps-list" id="steps"></ol>
+                </div>
+
+                <div class="section" id="tags-section" style="display:none;">
+                    <h2>Tags</h2>
+                    <div class="tags" id="tags"></div>
+                </div>
+
+                <div class="section">
+                    <a id="source-url" class="source-link" target="_blank">View Original Recipe →</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8000/v1';
+
+        async function loadRecipe() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const recipeId = urlParams.get('id');
+
+            if (!recipeId) {
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('error').style.display = 'block';
+                document.getElementById('error').textContent = 'No recipe ID provided';
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/recipes/${recipeId}`);
+
+                if (!response.ok) {
+                    throw new Error(`Failed to load recipe: ${response.statusText}`);
+                }
+
+                const recipe = await response.json();
+                displayRecipe(recipe);
+
+            } catch (error) {
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('error').style.display = 'block';
+                document.getElementById('error').textContent = error.message;
+            }
+        }
+
+        function displayRecipe(recipe) {
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('recipe-content').style.display = 'block';
+
+            // Title and source
+            document.getElementById('recipe-title').textContent = recipe.title;
+            document.getElementById('recipe-source').textContent = `by ${recipe.source_creator || 'Unknown'}`;
+
+            // Meta info
+            const metaInfo = document.getElementById('meta-info');
+            let metaHTML = '';
+
+            if (recipe.prep_time_minutes) {
+                metaHTML += `<div class="meta-item"><strong>Prep:</strong> ${recipe.prep_time_minutes} min</div>`;
+            }
+            if (recipe.cook_time_minutes) {
+                metaHTML += `<div class="meta-item"><strong>Cook:</strong> ${recipe.cook_time_minutes} min</div>`;
+            }
+            if (recipe.total_time_minutes) {
+                metaHTML += `<div class="meta-item"><strong>Total:</strong> ${recipe.total_time_minutes} min</div>`;
+            }
+            if (recipe.servings) {
+                metaHTML += `<div class="meta-item"><strong>Servings:</strong> ${recipe.servings}</div>`;
+            }
+            metaInfo.innerHTML = metaHTML;
+
+            // Description
+            if (recipe.description) {
+                document.getElementById('description-section').style.display = 'block';
+                document.getElementById('description').textContent = recipe.description;
+            }
+
+            // Ingredients
+            const ingredientsList = document.getElementById('ingredients');
+            if (recipe.ingredients && recipe.ingredients.length > 0) {
+                ingredientsList.innerHTML = recipe.ingredients.map(ing => {
+                    let text = ing.standard_name || ing.original_text;
+                    if (ing.quantity) {
+                        text = `${ing.quantity}${ing.unit ? ' ' + ing.unit : ''} ${text}`;
+                    }
+                    return `<li>${text}</li>`;
+                }).join('');
+            } else {
+                ingredientsList.innerHTML = '<li>No ingredients listed</li>';
+            }
+
+            // Steps
+            const stepsList = document.getElementById('steps');
+            if (recipe.steps && recipe.steps.length > 0) {
+                stepsList.innerHTML = recipe.steps.map(step =>
+                    `<li>${step.instruction}</li>`
+                ).join('');
+            } else {
+                stepsList.innerHTML = '<li>No instructions available</li>';
+            }
+
+            // Tags
+            if (recipe.tags && recipe.tags.length > 0) {
+                document.getElementById('tags-section').style.display = 'block';
+                document.getElementById('tags').innerHTML = recipe.tags.map(tag =>
+                    `<div class="tag">${tag.dimension_name}: ${tag.tag_value}</div>`
+                ).join('');
+            }
+
+            // Source URL
+            document.getElementById('source-url').href = recipe.source_url;
+        }
+
+        // Load recipe on page load
+        loadRecipe();
+    </script>
+</body>
+</html>

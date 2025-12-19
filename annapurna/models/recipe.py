@@ -79,6 +79,13 @@ class Recipe(Base):
     carbs_grams = Column(Float)
     fat_grams = Column(Float)
 
+    # Media (images and videos)
+    primary_image_url = Column(Text)  # Main dish photo
+    thumbnail_url = Column(Text)  # Optimized thumbnail
+    youtube_video_id = Column(String(50))  # YouTube video ID (if applicable)
+    youtube_video_url = Column(Text)  # Full YouTube URL
+    image_metadata = Column(JSONB)  # {original_url, dimensions, scraped_at, etc}
+
     # Note: Vector embeddings are stored in Qdrant, not PostgreSQL
     # Link recipes to Qdrant using recipe.id
 
@@ -93,6 +100,7 @@ class Recipe(Base):
     tags = relationship("RecipeTag", back_populates="recipe", cascade="all, delete-orphan")
     ingredients = relationship("RecipeIngredient", back_populates="recipe", cascade="all, delete-orphan")
     steps = relationship("RecipeStep", back_populates="recipe", cascade="all, delete-orphan")
+    media = relationship("RecipeMedia", back_populates="recipe", cascade="all, delete-orphan")
 
     # Similarity relationships
     similar_to = relationship(
@@ -186,3 +194,36 @@ class RecipeStep(Base):
 
     def __repr__(self):
         return f"<RecipeStep(recipe_id='{self.recipe_id}', step={self.step_number})>"
+
+
+class MediaTypeEnum(enum.Enum):
+    """Type of recipe media"""
+    main_dish = "main_dish"  # Final cooked dish photo
+    step = "step"  # Step-by-step photos
+    ingredient = "ingredient"  # Ingredient photos
+    video = "video"  # Video content
+
+
+class RecipeMedia(Base):
+    """Multiple images/media per recipe (step photos, ingredient photos, etc.)"""
+    __tablename__ = "recipe_media"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    recipe_id = Column(UUID(as_uuid=True), ForeignKey("recipes.id"), nullable=False, index=True)
+
+    # Media details
+    media_type = Column(Enum(MediaTypeEnum), nullable=False, index=True)
+    media_url = Column(Text, nullable=False)
+    display_order = Column(Integer, default=0)
+    caption = Column(Text)
+    is_primary = Column(Boolean, default=False, index=True)
+
+    # Metadata
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    media_metadata = Column(JSONB)  # {dimensions, source, file_size, etc} - renamed from 'metadata' which is reserved
+
+    # Relationships
+    recipe = relationship("Recipe", back_populates="media")
+
+    def __repr__(self):
+        return f"<RecipeMedia(recipe_id='{self.recipe_id}', type='{self.media_type.value}')>"

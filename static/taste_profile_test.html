@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Taste Profile & First Recommendations - Test Page</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        h1 { color: #333; margin-bottom: 10px; font-size: 32px; }
+        .subtitle { color: #666; margin-bottom: 30px; font-size: 16px; }
+        .form-section {
+            margin-bottom: 25px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 12px;
+            border-left: 4px solid #667eea;
+        }
+        .form-section h3 { color: #667eea; margin-bottom: 15px; font-size: 18px; }
+        label { display: block; margin-bottom: 8px; color: #555; font-weight: 500; }
+        input, select, textarea {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e1e8ed;
+            border-radius: 8px;
+            font-size: 15px;
+            transition: border-color 0.3s;
+        }
+        input:focus, select:focus, textarea:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        .checkbox-group {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 10px;
+            margin-top: 10px;
+        }
+        .checkbox-item {
+            display: flex;
+            align-items: center;
+            padding: 10px;
+            background: white;
+            border-radius: 6px;
+        }
+        .checkbox-item input { width: auto; margin-right: 10px; }
+        .slider-container { padding: 10px 0; }
+        .slider { width: 100%; }
+        .slider-value {
+            display: inline-block;
+            background: #667eea;
+            color: white;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 14px;
+            margin-left: 10px;
+        }
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 15px 40px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s;
+            width: 100%;
+            margin-top: 20px;
+        }
+        button:hover { transform: translateY(-2px); }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+        .result {
+            margin-top: 30px;
+            padding: 20px;
+            background: #f0f9ff;
+            border-radius: 12px;
+            border-left: 4px solid #3b82f6;
+            display: none;
+        }
+        .result.show { display: block; }
+        .result h2 { color: #3b82f6; margin-bottom: 15px; }
+        .recipe-card {
+            background: white;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 8px;
+            border: 1px solid #e1e8ed;
+        }
+        .recipe-card h4 { color: #333; margin-bottom: 8px; }
+        .recipe-meta { color: #666; font-size: 14px; margin: 5px 0; }
+        .recipe-reasoning {
+            background: #fef3c7;
+            padding: 10px;
+            border-radius: 6px;
+            margin-top: 10px;
+            font-size: 14px;
+            color: #92400e;
+        }
+        .confidence-badge {
+            display: inline-block;
+            background: #10b981;
+            color: white;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .error { background: #fee2e2; border-left-color: #ef4444; }
+        .error h2 { color: #ef4444; }
+        .loading { text-align: center; padding: 20px; color: #667eea; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🍛 Taste Profile & First Recommendations</h1>
+        <p class="subtitle">Fill out the 15-question form to get personalized LLM-curated recipe recommendations</p>
+
+        <form id="tasteProfileForm" onsubmit="return false;">
+            <!-- Q1: Household -->
+            <div class="form-section">
+                <h3>👨‍👩‍👧‍👦 Q1: Who's Answering?</h3>
+                <select id="household_type" required>
+                    <option value="">Select...</option>
+                    <option value="i_cook_myself">I cook for myself</option>
+                    <option value="i_cook_family">I cook for my family (nuclear)</option>
+                    <option value="joint_family">Joint family (multiple generations)</option>
+                    <option value="manage_help">I manage domestic help who cooks</option>
+                </select>
+            </div>
+
+            <!-- Q2: Time -->
+            <div class="form-section">
+                <h3>⏱️ Q2: Time Available on Weekdays?</h3>
+                <input type="number" id="time_available_weekday" min="15" max="180" value="45" required> minutes
+            </div>
+
+            <!-- Q3: Dietary -->
+            <div class="form-section">
+                <h3>🥗 Q3: Dietary Practice?</h3>
+                <select id="diet_type" required>
+                    <option value="">Select...</option>
+                    <option value="pure_veg">Pure Vegetarian (no meat/fish/eggs)</option>
+                    <option value="veg_eggs">Vegetarian + Eggs</option>
+                    <option value="non_veg">Non-Vegetarian</option>
+                </select>
+            </div>
+
+            <!-- Q4: Allium -->
+            <div class="form-section">
+                <h3>🧅 Q4: Onion & Garlic Usage?</h3>
+                <select id="allium_status" required>
+                    <option value="">Select...</option>
+                    <option value="both">Yes, both freely</option>
+                    <option value="no_onion">No onion, but garlic ok</option>
+                    <option value="no_garlic">No garlic, but onion ok</option>
+                    <option value="no_both">Neither onion nor garlic</option>
+                </select>
+            </div>
+
+            <!-- Q5: Prohibitions -->
+            <div class="form-section">
+                <h3>🚫 Q5: Ingredients to Avoid? (optional)</h3>
+                <div class="checkbox-group">
+                    <label class="checkbox-item"><input type="checkbox" value="paneer" name="prohibitions"> Paneer</label>
+                    <label class="checkbox-item"><input type="checkbox" value="mushrooms" name="prohibitions"> Mushrooms</label>
+                    <label class="checkbox-item"><input type="checkbox" value="brinjal" name="prohibitions"> Brinjal</label>
+                    <label class="checkbox-item"><input type="checkbox" value="okra" name="prohibitions"> Okra</label>
+                    <label class="checkbox-item"><input type="checkbox" value="karela" name="prohibitions"> Bitter Gourd</label>
+                    <label class="checkbox-item"><input type="checkbox" value="potato" name="prohibitions"> Potato</label>
+                </div>
+            </div>
+
+            <!-- Q6: Heat Level -->
+            <div class="form-section">
+                <h3>🌶️ Q6: Spice/Heat Level?</h3>
+                <div class="slider-container">
+                    <input type="range" id="heat_level" class="slider" min="1" max="5" value="3" required>
+                    <span class="slider-value" id="heat_level_display">3</span>
+                    <div style="margin-top:10px; color:#666; font-size:14px;">1 = Very Mild | 3 = Standard | 5 = Very Spicy</div>
+                </div>
+            </div>
+
+            <!-- Q7: Sweetness -->
+            <div class="form-section">
+                <h3>🍯 Q7: Sweetness in Savory Dishes?</h3>
+                <select id="sweetness_in_savory" required>
+                    <option value="">Select...</option>
+                    <option value="never">Never add sweet - pure savory</option>
+                    <option value="subtle">Slight sweetness ok (subtle)</option>
+                    <option value="regular">Regularly sweet (Gujarati/Bengali style)</option>
+                </select>
+            </div>
+
+            <!-- Q8: Gravy (multi-select) -->
+            <div class="form-section">
+                <h3>🍛 Q8: Gravy Preference? (select all that apply)</h3>
+                <div class="checkbox-group">
+                    <label class="checkbox-item"><input type="checkbox" value="dry" name="gravy"> Dry (sukhi sabzi)</label>
+                    <label class="checkbox-item"><input type="checkbox" value="semi_dry" name="gravy"> Semi-dry</label>
+                    <label class="checkbox-item"><input type="checkbox" value="medium" name="gravy"> Medium gravy</label>
+                    <label class="checkbox-item"><input type="checkbox" value="thin" name="gravy"> Thin/soupy (rasam)</label>
+                    <label class="checkbox-item"><input type="checkbox" value="mixed" name="gravy"> Depends on dish</label>
+                </div>
+            </div>
+
+            <!-- Q9: Fat Richness -->
+            <div class="form-section">
+                <h3>🥄 Q9: How Rich/Heavy Should Food Be?</h3>
+                <select id="fat_richness" required>
+                    <option value="">Select...</option>
+                    <option value="light">Light (minimal oil, healthy)</option>
+                    <option value="medium">Medium (balanced)</option>
+                    <option value="rich">Rich (ghee-heavy, restaurant style)</option>
+                </select>
+            </div>
+
+            <!-- Q10: Regional (max 2) -->
+            <div class="form-section">
+                <h3>🗺️ Q10: Regional Influence (pick 1-2 max)</h3>
+                <div class="checkbox-group">
+                    <label class="checkbox-item"><input type="checkbox" value="north_indian" name="regional"> North Indian</label>
+                    <label class="checkbox-item"><input type="checkbox" value="south_indian" name="regional"> South Indian</label>
+                    <label class="checkbox-item"><input type="checkbox" value="bengali" name="regional"> Bengali/Eastern</label>
+                    <label class="checkbox-item"><input type="checkbox" value="gujarati" name="regional"> Gujarati</label>
+                    <label class="checkbox-item"><input type="checkbox" value="maharashtrian" name="regional"> Maharashtrian</label>
+                    <label class="checkbox-item"><input type="checkbox" value="punjabi" name="regional"> Punjabi</label>
+                    <label class="checkbox-item"><input type="checkbox" value="hyderabadi" name="regional"> Hyderabadi</label>
+                </div>
+            </div>
+
+            <!-- Q11: Cooking Fat -->
+            <div class="form-section">
+                <h3>🧈 Q11: Primary Cooking Fat?</h3>
+                <select id="cooking_fat" required>
+                    <option value="">Select...</option>
+                    <option value="ghee">Ghee</option>
+                    <option value="mustard">Mustard oil</option>
+                    <option value="coconut">Coconut oil</option>
+                    <option value="vegetable">Vegetable oil</option>
+                    <option value="mixed">Mix/varies</option>
+                </select>
+            </div>
+
+            <!-- Q12: Staple -->
+            <div class="form-section">
+                <h3>🍚 Q12: Main Staple?</h3>
+                <select id="primary_staple" required>
+                    <option value="">Select...</option>
+                    <option value="rice">Mostly rice</option>
+                    <option value="roti">Mostly roti/wheat</option>
+                    <option value="both">Both equally</option>
+                </select>
+            </div>
+
+            <!-- Q13: Masala (multi-select) -->
+            <div class="form-section">
+                <h3>🌿 Q13: Signature Masala in Spice Box?</h3>
+                <div class="checkbox-group">
+                    <label class="checkbox-item"><input type="checkbox" value="garam_masala" name="masala"> Garam Masala</label>
+                    <label class="checkbox-item"><input type="checkbox" value="sambar_powder" name="masala"> Sambar Powder</label>
+                    <label class="checkbox-item"><input type="checkbox" value="goda_masala" name="masala"> Goda Masala</label>
+                    <label class="checkbox-item"><input type="checkbox" value="panch_phoron" name="masala"> Panch Phoron</label>
+                    <label class="checkbox-item"><input type="checkbox" value="basic_spices" name="masala"> Just basic spices</label>
+                </div>
+            </div>
+
+            <!-- Q14: Health (multi-select) -->
+            <div class="form-section">
+                <h3>💊 Q14: Health Modifications? (optional)</h3>
+                <div class="checkbox-group">
+                    <label class="checkbox-item"><input type="checkbox" value="diabetes" name="health"> Diabetes-friendly</label>
+                    <label class="checkbox-item"><input type="checkbox" value="low_oil" name="health"> Low oil/heart-healthy</label>
+                    <label class="checkbox-item"><input type="checkbox" value="low_salt" name="health"> Low salt</label>
+                    <label class="checkbox-item"><input type="checkbox" value="high_protein" name="health"> High protein focus</label>
+                </div>
+            </div>
+
+            <!-- Q15: Sacred Dishes -->
+            <div class="form-section">
+                <h3>📝 Q15: Sacred Dishes (optional)</h3>
+                <textarea id="sacred_dishes" rows="2" placeholder="e.g., Mom's dal, Sunday chicken curry"></textarea>
+            </div>
+
+            <button type="button" id="submitBtn">
+                Generate First Recommendations 🚀
+            </button>
+        </form>
+
+        <div id="result" class="result"></div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8000/v1';
+        const form = document.getElementById('tasteProfileForm');
+        const result = document.getElementById('result');
+        const submitBtn = document.getElementById('submitBtn');
+
+        // Heat level slider
+        document.getElementById('heat_level').addEventListener('input', (e) => {
+            document.getElementById('heat_level_display').textContent = e.target.value;
+        });
+
+        // Regional checkbox limit (max 2)
+        const regionalCheckboxes = document.querySelectorAll('input[name="regional"]');
+        regionalCheckboxes.forEach(cb => {
+            cb.addEventListener('change', () => {
+                const checked = document.querySelectorAll('input[name="regional"]:checked');
+                if (checked.length > 2) {
+                    cb.checked = false;
+                    alert('Maximum 2 regional influences allowed');
+                }
+            });
+        });
+
+        submitBtn.addEventListener('click', async (e) => {
+            e.preventDefault();
+
+            const userId = `user_${Date.now()}`;
+
+            // Collect form data
+            const formData = {
+                user_id: userId,
+                household_type: document.getElementById('household_type').value,
+                time_available_weekday: parseInt(document.getElementById('time_available_weekday').value),
+                dietary_practice: {
+                    type: document.getElementById('diet_type').value,
+                    restrictions: []
+                },
+                allium_status: document.getElementById('allium_status').value,
+                specific_prohibitions: Array.from(document.querySelectorAll('input[name="prohibitions"]:checked')).map(el => el.value),
+                heat_level: parseInt(document.getElementById('heat_level').value),
+                sweetness_in_savory: document.getElementById('sweetness_in_savory').value,
+                gravy_preferences: Array.from(document.querySelectorAll('input[name="gravy"]:checked')).map(el => el.value),
+                fat_richness: document.getElementById('fat_richness').value,
+                regional_influences: Array.from(document.querySelectorAll('input[name="regional"]:checked')).map(el => el.value),
+                cooking_fat: document.getElementById('cooking_fat').value,
+                primary_staple: document.getElementById('primary_staple').value,
+                signature_masalas: Array.from(document.querySelectorAll('input[name="masala"]:checked')).map(el => el.value),
+                health_modifications: Array.from(document.querySelectorAll('input[name="health"]:checked')).map(el => el.value),
+                sacred_dishes: document.getElementById('sacred_dishes').value || null
+            };
+
+            // Validate
+            if (formData.gravy_preferences.length === 0) {
+                alert('Please select at least one gravy preference');
+                return;
+            }
+            if (formData.regional_influences.length === 0) {
+                alert('Please select at least one regional influence');
+                return;
+            }
+
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Submitting profile...';
+            result.classList.remove('show');
+
+            try {
+                // Step 1: Submit taste profile
+                const profileRes = await fetch(`${API_BASE}/taste-profile/submit`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(formData)
+                });
+
+                if (!profileRes.ok) {
+                    throw new Error(`Profile submission failed: ${profileRes.statusText}`);
+                }
+
+                const profileData = await profileRes.json();
+                console.log('Profile submitted:', profileData);
+
+                // Step 2: Get first recommendations
+                submitBtn.textContent = 'Generating LLM recommendations...';
+
+                const recsRes = await fetch(`${API_BASE}/recommendations/first?user_id=${userId}&use_llm=true`);
+
+                if (!recsRes.ok) {
+                    const errorData = await recsRes.json();
+                    throw new Error(errorData.detail || `Recommendations failed: ${recsRes.statusText}`);
+                }
+
+                const recsData = await recsRes.json();
+                console.log('Recommendations:', recsData);
+
+                // Display results
+                displayResults(recsData);
+
+            } catch (error) {
+                result.innerHTML = `
+                    <h2>❌ Error</h2>
+                    <p>${error.message}</p>
+                    <p style="margin-top:10px; font-size:14px;">Check browser console for details.</p>
+                `;
+                result.classList.add('error');
+                result.classList.add('show');
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Generate First Recommendations 🚀';
+            }
+        });
+
+        function displayResults(data) {
+            let html = `
+                <h2>✅ Your Personalized Recommendations</h2>
+                <p><strong>Method:</strong> ${data.method}</p>
+                <p style="margin-bottom:20px;"><em>${data.note}</em></p>
+            `;
+
+            data.recommendations.forEach((rec, index) => {
+                html += `
+                    <div class="recipe-card">
+                        <h4>${index + 1}. ${rec.recipe_title}</h4>
+                        <div class="recipe-meta">
+                            <span class="confidence-badge">${(rec.confidence_score * 100).toFixed(0)}% Match</span>
+                            ${rec.cook_time ? `⏱️ ${rec.cook_time} min` : ''}
+                            ${rec.cuisine ? ` | 🍽️ ${rec.cuisine.join(', ')}` : ''}
+                        </div>
+                        <div class="recipe-reasoning">
+                            <strong>Why this recipe:</strong> ${rec.llm_reasoning}
+                        </div>
+                        <div style="margin-top:10px;">
+                            <a href="recipe_details.html?id=${rec.recipe_id}" target="_blank" style="padding: 8px 15px; background: #4CAF50; color: white; text-decoration: none; border-radius: 5px; display: inline-block; font-size: 14px;">View Recipe →</a>
+                            ${rec.source_url ? `<a href="${rec.source_url}" target="_blank" style="padding: 8px 15px; background: #2196F3; color: white; text-decoration: none; border-radius: 5px; display: inline-block; font-size: 14px; margin-left: 10px;">Original Source →</a>` : ''}
+                        </div>
+                    </div>
+                `;
+            });
+
+            result.innerHTML = html;
+            result.classList.remove('error');
+            result.classList.add('show');
+            result.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+    </script>
+</body>
+</html>

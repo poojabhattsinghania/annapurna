@@ -119,6 +119,9 @@ class YouTubeScraper:
             snippet = video['snippet']
             statistics = video.get('statistics', {})
 
+            # Get all thumbnail URLs (API + direct URLs)
+            thumbnails = self.get_thumbnail_urls(video_id)
+
             return {
                 'title': snippet['title'],
                 'description': snippet['description'],
@@ -127,13 +130,35 @@ class YouTubeScraper:
                 'duration': video['contentDetails']['duration'],
                 'view_count': int(statistics.get('viewCount', 0)),
                 'like_count': int(statistics.get('likeCount', 0)),
-                'thumbnail_url': snippet['thumbnails']['high']['url'],
+                'thumbnail_url': thumbnails['maxresdefault'],  # Highest quality
+                'all_thumbnails': thumbnails,
                 'tags': snippet.get('tags', [])
             }
 
         except Exception as e:
             print(f"Error fetching metadata for {video_id}: {str(e)}")
             return self._fetch_metadata_without_api(video_id)
+
+    def get_thumbnail_urls(self, video_id: str) -> Dict[str, str]:
+        """
+        Get all available thumbnail URLs for a video
+
+        Returns:
+            {
+                'maxresdefault': 'https://...',  # 1920x1080 (if available)
+                'sddefault': 'https://...',      # 640x480
+                'hqdefault': 'https://...',      # 480x360
+                'mqdefault': 'https://...',      # 320x180
+                'default': 'https://...'         # 120x90
+            }
+        """
+        return {
+            'maxresdefault': f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg",
+            'sddefault': f"https://img.youtube.com/vi/{video_id}/sddefault.jpg",
+            'hqdefault': f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg",
+            'mqdefault': f"https://img.youtube.com/vi/{video_id}/mqdefault.jpg",
+            'default': f"https://img.youtube.com/vi/{video_id}/default.jpg"
+        }
 
     def _fetch_metadata_without_api(self, video_id: str) -> Optional[Dict]:
         """Fetch basic metadata by scraping video page (fallback)"""
@@ -148,6 +173,9 @@ class YouTubeScraper:
             desc_match = re.search(r'"description":{"simpleText":"([^"]+)"', response.text)
             channel_match = re.search(r'"author":"([^"]+)"', response.text)
 
+            # Get all thumbnail URLs
+            thumbnails = self.get_thumbnail_urls(video_id)
+
             return {
                 'title': title_match.group(1) if title_match else f"Video {video_id}",
                 'description': desc_match.group(1) if desc_match else "",
@@ -156,7 +184,8 @@ class YouTubeScraper:
                 'duration': None,
                 'view_count': 0,
                 'like_count': 0,
-                'thumbnail_url': f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg",
+                'thumbnail_url': thumbnails['maxresdefault'],  # Highest quality
+                'all_thumbnails': thumbnails,
                 'tags': []
             }
 
