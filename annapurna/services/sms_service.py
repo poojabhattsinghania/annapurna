@@ -19,6 +19,7 @@ class SMSService:
     OTP_EXPIRY_MINUTES = 5
     MAX_OTP_ATTEMPTS = 3
     RATE_LIMIT_WINDOW_MINUTES = 10
+    DEV_OTP = "123456"  # Fixed OTP for development/testing
 
     # Redis key prefixes
     OTP_KEY_PREFIX = "otp:"
@@ -39,7 +40,9 @@ class SMSService:
             self.twilio_enabled = False
 
     def _generate_otp(self) -> str:
-        """Generate a random 6-digit OTP"""
+        """Generate OTP - fixed in dev mode, random in production"""
+        if settings.environment != "production":
+            return self.DEV_OTP
         return ''.join([str(random.randint(0, 9)) for _ in range(self.OTP_LENGTH)])
 
     def _hash_otp(self, otp: str) -> str:
