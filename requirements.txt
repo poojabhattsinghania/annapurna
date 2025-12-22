@@ -60,3 +60,11 @@ psutil==5.9.8
 black==24.1.1
 flake8==7.0.0
 mypy==1.8.0
+
+# Video Processing (Social Media Reels)
+yt-dlp==2024.3.10  # Download Instagram/Facebook Reels
+openai-whisper==20231117  # Audio transcription (Hindi/English/Hinglish)
+easyocr==1.7.1  # OCR for text overlays (Devanagari + English)
+opencv-python==4.9.0.80  # Frame extraction and scene detection
+scenedetect[opencv]==0.6.3  # Scene change detection
+ffmpeg-python==0.2.0  # Audio/video manipulation

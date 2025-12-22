@@ -10,6 +10,11 @@ RUN apt-get update && apt-get install -y \
     g++ \
     postgresql-client \
     curl \
+    ffmpeg \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first for better caching

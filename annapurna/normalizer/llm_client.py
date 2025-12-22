@@ -256,3 +256,184 @@ class LLMClient:
 
         print(f"Failed to parse JSON from Lite response: {response[:200]}...")
         return None
+
+
+def extract_recipe_from_reel(
+    audio_transcript: str,
+    ocr_texts: list,
+    scene_count: int,
+    video_metadata: Optional[Dict] = None,
+    visual_ingredients: Optional[list] = None
+) -> Optional[Dict]:
+    """
+    Extract structured recipe data from social media reel using Gemini
+
+    Combines:
+    - Audio transcript (narration in Hindi/English/Hinglish)
+    - OCR text from video frames (ingredient overlays)
+    - Scene information (cooking steps)
+    - Video metadata (title, description)
+
+    Args:
+        audio_transcript: Full transcript from Whisper
+        ocr_texts: List of text extracted from video frames via OCR
+        scene_count: Number of detected scenes (cooking steps)
+        video_metadata: Optional metadata (title, description, uploader)
+
+    Returns:
+        Structured recipe dict:
+        {
+            'title': str,
+            'description': str,
+            'ingredients': [
+                {
+                    'item': str,
+                    'quantity': float,
+                    'unit': str,
+                    'original_text': str
+                }
+            ],
+            'instructions': [
+                {
+                    'step_number': int,
+                    'instruction': str,
+                    'estimated_time_minutes': int
+                }
+            ],
+            'metadata': {
+                'cuisine': str,
+                'dietary_tags': List[str],
+                'cooking_time_minutes': int,
+                'servings': int
+            }
+        }
+    """
+    client = LLMClient()
+
+    # Combine OCR texts
+    ocr_combined = "\n".join([text['text'] for text in ocr_texts if isinstance(text, dict)])
+
+    # Combine visual ingredients
+    visual_combined = ""
+    if visual_ingredients:
+        visual_items = []
+        for ing in visual_ingredients:
+            item = f"- {ing.get('ingredient', 'Unknown')}"
+            if ing.get('quantity'):
+                item += f" ({ing.get('quantity')})"
+            if ing.get('state'):
+                item += f" [{ing.get('state')}]"
+            if ing.get('confidence'):
+                item += f" - confidence: {ing.get('confidence')}"
+            visual_items.append(item)
+        visual_combined = "\n".join(visual_items)
+
+    # Prepare video info
+    video_info = ""
+    if video_metadata:
+        video_info = f"""
+VIDEO METADATA:
+Title: {video_metadata.get('title', 'Unknown')}
+Description: {video_metadata.get('description', '')}
+Uploader: {video_metadata.get('uploader', '')}
+"""
+
+    # Create comprehensive prompt
+    prompt = f"""You are an expert Indian recipe extractor. Analyze the following data from a cooking video and extract a complete, structured recipe.
+
+{video_info}
+
+AUDIO TRANSCRIPT (Narration):
+{audio_transcript}
+
+TEXT OVERLAYS (OCR from video frames):
+{ocr_combined}
+
+VISUAL INGREDIENTS DETECTED (Gemini Vision Analysis):
+{visual_combined if visual_combined else "None detected"}
+
+DETECTED SCENES: {scene_count} cooking steps detected
+
+**IMPORTANT**: You now have 3 data sources:
+1. Audio (what was spoken)
+2. Text overlays (what was written on screen)
+3. Visual detection (what ingredients were seen in the video)
+
+Use ALL THREE sources to create the most complete and accurate ingredient list.
+If visual detection shows specific spices but audio only says "whole spices", use the specific visual detections.
+
+YOUR TASK:
+Extract and structure the recipe with the following requirements:
+
+1. **Recipe Title**: Create a clear, descriptive title in English
+2. **Description**: Brief description (2-3 sentences) about the dish
+3. **Ingredients**: Parse ALL ingredients with:
+   - Exact quantities (convert to standard units: grams, cups, teaspoons, tablespoons)
+   - Ingredient names in English (translate from Hindi if needed)
+   - Include preparation notes (e.g., "chopped", "finely sliced")
+
+4. **Cooking Instructions**: Create step-by-step instructions:
+   - Number each step sequentially
+   - Write clear, actionable instructions in English
+   - Estimate time for each step if mentioned
+   - Combine information from audio and visual cues
+
+5. **Metadata**:
+   - Cuisine type (north_indian, south_indian, etc.)
+   - Dietary tags (vegetarian, vegan, non_veg, jain, etc.)
+   - Total cooking time in minutes
+   - Number of servings
+   - Difficulty level (easy, medium, hard)
+
+IMPORTANT NOTES:
+- If ingredients are in Hindi (like "हल्दी"), translate to English ("turmeric")
+- Common Hindi-English mappings:
+  - हल्दी = turmeric, मिर्च = chili, जीरा = cumin, धनिया = coriander
+  - तेल = oil, घी = ghee, नमक = salt, चीनी = sugar
+  - आटा = flour, दाल = lentils, चावल = rice
+- Extract measurements even if approximate (e.g., "थोड़ा सा" = "1/4 teaspoon")
+- Number of steps should roughly match the {scene_count} detected scenes
+
+Return ONLY valid JSON in this exact format:
+{{
+  "title": "Recipe Name",
+  "description": "Brief description of the dish",
+  "ingredients": [
+    {{
+      "item": "Ingredient name in English",
+      "quantity": 200,
+      "unit": "grams",
+      "preparation": "chopped",
+      "original_text": "200g प्याज कटा हुआ"
+    }}
+  ],
+  "instructions": [
+    {{
+      "step_number": 1,
+      "instruction": "Heat oil in a pan over medium heat",
+      "estimated_time_minutes": 2
+    }}
+  ],
+  "metadata": {{
+    "cuisine": "north_indian",
+    "dietary_tags": ["vegetarian"],
+    "cooking_time_minutes": 30,
+    "servings": 4,
+    "difficulty": "easy",
+    "meal_type": "main_course"
+  }}
+}}
+"""
+
+    # Use standard Gemini model for complex reasoning
+    result = client.generate_json(prompt, temperature=0.3, max_tokens=4096)
+
+    if result:
+        print("✓ Recipe extracted successfully using Gemini")
+        print(f"  Title: {result.get('title', 'Unknown')}")
+        print(f"  Ingredients: {len(result.get('ingredients', []))}")
+        print(f"  Steps: {len(result.get('instructions', []))}")
+    else:
+        print("✗ Failed to extract recipe from reel")
+
+    return result
