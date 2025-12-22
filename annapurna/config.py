@@ -45,6 +45,12 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     api_version: str = "v1"
 
+    # Twilio (SMS & WhatsApp)
+    twilio_account_sid: Optional[str] = None
+    twilio_auth_token: Optional[str] = None
+    twilio_phone_number: Optional[str] = None
+    twilio_whatsapp_number: Optional[str] = None
+
     # Scraping
     youtube_api_key: Optional[str] = None
     scraper_user_agent: str = "Mozilla/5.0 (compatible; AnnapurnaBot/1.0)"
