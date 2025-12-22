@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from annapurna.models.base import get_db
 from annapurna.services.whatsapp_service import whatsapp_service
 
-router = APIRouter(prefix="/whatsapp", tags=["whatsapp"])
+router = APIRouter(tags=["whatsapp"])
 
 
 class SendToMaidRequest(BaseModel):

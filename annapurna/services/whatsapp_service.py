@@ -7,7 +7,7 @@ from twilio.base.exceptions import TwilioRestException
 from annapurna.config import settings
 from annapurna.models.base import SessionLocal
 from annapurna.models.recipe import Recipe
-from annapurna.models.user import UserProfile
+from annapurna.models.user_preferences import UserProfile, OnboardingSession
 
 
 class WhatsAppService:
@@ -91,19 +91,38 @@ class WhatsAppService:
         return "\n".join(message_parts)
 
     def get_maid_phone(self, user_id: str, db=None) -> Optional[str]:
-        """Get maid phone number from user profile"""
+        """Get maid phone number from onboarding session data"""
         close_session = False
         if db is None:
             db = SessionLocal()
             close_session = True
 
         try:
+            # First get the user profile
             profile = db.query(UserProfile).filter(
                 UserProfile.user_id == user_id
             ).first()
 
-            if profile and profile.household_info:
-                return profile.household_info.get('maid_phone_number')
+            if not profile:
+                return None
+
+            # Get the onboarding session which has step_data with maid phone
+            session = db.query(OnboardingSession).filter(
+                OnboardingSession.user_profile_id == profile.id
+            ).first()
+
+            if session and session.step_data:
+                # Maid phone could be in various steps - check all
+                for step_key in ['step_5', 'step_6', 'step_7', 'step_8']:
+                    step_data = session.step_data.get(step_key, {})
+                    maid_phone = step_data.get('maid_phone_number')
+                    if maid_phone:
+                        return maid_phone
+
+            # DEV MODE: If no maid phone found but user has profile, use test number
+            if settings.environment != "production":
+                return "+919999999999"
+
             return None
         finally:
             if close_session:
@@ -131,8 +150,8 @@ class WhatsAppService:
             close_session = True
 
         try:
-            # Check if WhatsApp is configured
-            if not self.twilio_enabled or not self.whatsapp_from:
+            # Check if WhatsApp is configured (skip in dev mode)
+            if settings.environment == "production" and (not self.twilio_enabled or not self.whatsapp_from):
                 return False, "WhatsApp is not configured. Please contact support."
 
             # Get maid phone number
