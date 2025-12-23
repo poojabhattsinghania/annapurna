@@ -20,7 +20,7 @@ from annapurna.config import settings
 from annapurna.models.user_preferences import (
     UserProfile, UserSwipeHistory, UserCookingHistory, RecipeRecommendation
 )
-from annapurna.models.recipe import Recipe, RecipeTag
+from annapurna.models.recipe import Recipe, RecipeTag, RecipeIngredient
 from annapurna.models.taxonomy import TagDimension
 from annapurna.utils.qdrant_client import get_qdrant_client
 from annapurna.services.user_taste_embedding_service import UserTasteEmbeddingService
@@ -355,9 +355,11 @@ class RAGRecommendationsService:
     ) -> List[Dict[str, Any]]:
         """
         Apply hybrid scoring to candidates.
+        When pantry_ingredients is provided, pantry match becomes the PRIMARY scoring factor.
         """
         scored = []
         selected_recipes = []
+        is_pantry_mode = bool(pantry_ingredients and len(pantry_ingredients) > 0)
 
         for candidate in candidates:
             recipe = candidate["recipe"]
@@ -372,23 +374,44 @@ class RAGRecommendationsService:
             # Freshness score (boost new recipes)
             freshness_score = self._calculate_freshness_score(recipe)
 
-            # Pantry boost (optional)
-            pantry_boost = 0
-            if pantry_ingredients:
-                pantry_boost = self._calculate_pantry_match(recipe, pantry_ingredients)
+            # Pantry match (returns tuple: score, matched_count, total_ingredients)
+            pantry_score = 0.0
+            pantry_matched = 0
+            pantry_total = 0
+            if is_pantry_mode:
+                pantry_score, pantry_matched, pantry_total = self._calculate_pantry_match(
+                    recipe, pantry_ingredients
+                )
 
             # Calculate total score
-            total_score = (
-                SCORING_WEIGHTS["vector_similarity"] * vector_score +
-                SCORING_WEIGHTS["feedback_score"] * max(0, (feedback_score + 1) / 2) +  # Normalize -1,1 to 0,1
-                SCORING_WEIGHTS["diversity_score"] * diversity_score +
-                SCORING_WEIGHTS["freshness_score"] * freshness_score +
-                0.1 * pantry_boost  # Pantry boost
-            )
+            if is_pantry_mode:
+                # PANTRY MODE: Pantry match is the PRIMARY factor (50%)
+                # Only recipes with at least 1 pantry ingredient match are included
+                if pantry_matched == 0:
+                    continue  # Skip recipes with no pantry matches
+
+                total_score = (
+                    0.50 * pantry_score +                    # Pantry match is primary
+                    0.25 * vector_score +                    # Taste preference
+                    0.15 * max(0, (feedback_score + 1) / 2) +  # User feedback
+                    0.05 * diversity_score +                 # Variety
+                    0.05 * freshness_score                   # New recipes
+                )
+            else:
+                # NORMAL MODE: Standard hybrid scoring
+                total_score = (
+                    SCORING_WEIGHTS["vector_similarity"] * vector_score +
+                    SCORING_WEIGHTS["feedback_score"] * max(0, (feedback_score + 1) / 2) +
+                    SCORING_WEIGHTS["diversity_score"] * diversity_score +
+                    SCORING_WEIGHTS["freshness_score"] * freshness_score
+                )
 
             candidate["feedback_score"] = feedback_score
             candidate["diversity_score"] = diversity_score
             candidate["freshness_score"] = freshness_score
+            candidate["pantry_score"] = pantry_score
+            candidate["pantry_matched"] = pantry_matched
+            candidate["pantry_total"] = pantry_total
             candidate["total_score"] = total_score
 
             scored.append(candidate)
@@ -475,16 +498,88 @@ class RAGRecommendationsService:
         self,
         recipe: Recipe,
         pantry_ingredients: List[str]
-    ) -> float:
-        """Calculate how well recipe matches available pantry ingredients"""
+    ) -> Tuple[float, int, int]:
+        """
+        Calculate how well recipe matches available pantry ingredients.
+
+        Returns:
+            Tuple of (match_score, matched_count, total_recipe_ingredients)
+        """
         if not pantry_ingredients:
-            return 0.0
+            return 0.0, 0, 0
 
-        title_lower = recipe.title.lower() if recipe.title else ""
-        pantry_lower = [ing.lower() for ing in pantry_ingredients]
+        # Normalize pantry ingredients to lowercase words
+        pantry_words = set()
+        for ing in pantry_ingredients:
+            # Split by spaces and add individual words
+            for word in ing.lower().strip().split():
+                if len(word) > 2:  # Skip very short words
+                    pantry_words.add(word)
 
-        matches = sum(1 for ing in pantry_lower if ing in title_lower)
-        return min(matches / 3, 1.0)  # Cap at 1.0 for 3+ matches
+        # Get recipe ingredients from the database relationship
+        recipe_ingredients = self.db.query(RecipeIngredient).filter(
+            RecipeIngredient.recipe_id == recipe.id
+        ).all()
+
+        if not recipe_ingredients:
+            return 0.0, 0, 0
+
+        matched_count = 0
+        total_ingredients = len(recipe_ingredients)
+
+        for rec_ing in recipe_ingredients:
+            ingredient_matched = False
+
+            # Build list of all names to check for this ingredient
+            names_to_check = []
+
+            # 1. Check ingredient_name (parsed name for unmatched ingredients)
+            if rec_ing.ingredient_name:
+                names_to_check.append(rec_ing.ingredient_name.lower())
+
+            # 2. Check original_text
+            if rec_ing.original_text:
+                names_to_check.append(rec_ing.original_text.lower())
+
+            # 3. Check linked IngredientMaster if exists
+            if rec_ing.ingredient:
+                master = rec_ing.ingredient
+                if master.standard_name:
+                    names_to_check.append(master.standard_name.lower())
+                if master.hindi_name:
+                    names_to_check.append(master.hindi_name.lower())
+                if master.search_synonyms:
+                    names_to_check.extend([s.lower() for s in master.search_synonyms])
+
+            # Check if any pantry word matches any ingredient name
+            for name in names_to_check:
+                name_words = set(name.split())
+                if pantry_words & name_words:  # Set intersection
+                    ingredient_matched = True
+                    break
+                # Also check if pantry word is contained in the name (for compound words)
+                for pantry_word in pantry_words:
+                    if pantry_word in name:
+                        ingredient_matched = True
+                        break
+                if ingredient_matched:
+                    break
+
+            if ingredient_matched:
+                matched_count += 1
+
+        # Calculate match score
+        # Use ratio of matched ingredients, but also consider absolute matches
+        if total_ingredients == 0:
+            return 0.0, 0, 0
+
+        ratio_score = matched_count / total_ingredients
+        # Bonus for having multiple matches (more ingredients = better use of pantry)
+        absolute_bonus = min(matched_count / 5, 0.3)  # Up to 0.3 bonus for 5+ matches
+
+        match_score = min(ratio_score + absolute_bonus, 1.0)
+
+        return match_score, matched_count, total_ingredients
 
     def _llm_rerank(
         self,
@@ -587,6 +682,9 @@ ONLY return the JSON array, nothing else."""
                     "servings": recipe.servings,
                     "match_score": candidate["total_score"],
                     "vector_score": candidate["vector_score"],
+                    "pantry_score": candidate.get("pantry_score", 0),
+                    "pantry_matched": candidate.get("pantry_matched", 0),
+                    "pantry_total": candidate.get("pantry_total", 0),
                     "explanation": llm_rec.get("explanation", "")
                 })
 
@@ -607,6 +705,9 @@ ONLY return the JSON array, nothing else."""
                     "servings": c["recipe"].servings,
                     "match_score": c["total_score"],
                     "vector_score": c["vector_score"],
+                    "pantry_score": c.get("pantry_score", 0),
+                    "pantry_matched": c.get("pantry_matched", 0),
+                    "pantry_total": c.get("pantry_total", 0),
                     "explanation": ""
                 }
                 for c in candidates[:limit]
