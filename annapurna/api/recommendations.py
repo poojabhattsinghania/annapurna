@@ -182,14 +182,12 @@ def get_next_meal_recommendations(
     meal_type: Optional[str] = Query(None, description="Override meal type: breakfast, lunch, snack, dinner (auto-detects if not provided)"),
     include_pantry: bool = Query(False, description="Include pantry-based recommendations"),
     pantry_ingredients: Optional[List[str]] = Query(None, description="List of available ingredients"),
-    use_rag: bool = Query(True, description="Use RAG-based recommendations (default, learns from feedback)"),
-    use_llm: bool = Query(False, description="Use legacy LLM-only curation (deprecated)"),
     db: Session = Depends(get_db)
 ):
     """
-    Get time-aware recommendations for next meal
+    Get time-aware recommendations for next meal using RAG.
 
-    **UPDATED**: Now uses RAG-based recommendations by default!
+    Features:
     - Learns from your likes, saves, and rejects
     - Won't show recipes you rejected
     - 7-day cooldown on previously shown recipes
@@ -218,65 +216,33 @@ def get_next_meal_recommendations(
     else:
         detected_meal = meal_type
 
-    method_used = 'rag_personalized'
-    recommendations = []
+    try:
+        rag_service = RAGRecommendationsService(db)
+        result = rag_service.generate_recommendations(
+            user_id=user_id,
+            meal_type=detected_meal,
+            limit=10,
+            include_pantry=include_pantry,
+            pantry_ingredients=pantry_ingredients
+        )
+        recommendations = result.get('recommendations', [])
 
-    # Try RAG first (default)
-    if use_rag:
-        try:
-            rag_service = RAGRecommendationsService(db)
-            result = rag_service.generate_recommendations(
-                user_id=user_id,
-                meal_type=detected_meal,
-                limit=10,
-                include_pantry=include_pantry,
-                pantry_ingredients=pantry_ingredients
-            )
-            recommendations = result.get('recommendations', [])
-            method_used = 'rag_personalized'
-        except Exception as e:
-            print(f"RAG recommendation failed, trying LLM fallback: {str(e)}")
-            use_rag = False
+        return {
+            'status': 'success',
+            'meal_type': detected_meal,
+            'current_time': datetime.now().strftime('%I:%M %p'),
+            'total_recommendations': len(recommendations),
+            'recommendations': recommendations,
+            'method': 'rag_personalized',
+            'note': f'Time-aware recommendations for {detected_meal} - learns from your feedback'
+        }
 
-    # Fallback to LLM if RAG fails
-    if not use_rag or len(recommendations) < 5:
-        if use_llm or not use_rag:
-            try:
-                llm_service = LLMRecommendationsService(db)
-                recommendations = llm_service.generate_next_meal_recommendations(
-                    user_id=user_id,
-                    meal_type=detected_meal,
-                    include_pantry=include_pantry,
-                    pantry_ingredients=pantry_ingredients
-                )
-                method_used = 'llm_curated'
-            except Exception as e:
-                print(f"LLM recommendation failed, trying vector-based: {str(e)}")
-
-    # Final fallback to vector-based
-    if len(recommendations) < 5:
-        method_used = 'vector_based'
-        try:
-            service = FirstRecommendationsService(db)
-            recommendations = service.generate_first_recommendations(
-                user_id=user_id,
-                include_pantry=include_pantry,
-                pantry_ingredients=pantry_ingredients
-            )
-        except Exception as e:
-            print(f"Vector-based fallback also failed: {str(e)}")
-            recommendations = []
-
-    return {
-        'status': 'success',
-        'meal_type': detected_meal,
-        'current_time': datetime.now().strftime('%I:%M %p'),
-        'total_recommendations': len(recommendations),
-        'recommendations': recommendations,
-        'method': method_used,
-        'note': f'Time-aware recommendations for {detected_meal}' +
-                (' - learns from your feedback' if method_used == 'rag_personalized' else '')
-    }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"RAG recommendation failed: {str(e)}")
 
 
 @router.get("/first")
@@ -284,84 +250,45 @@ def get_first_recommendations(
     user_id: str,
     include_pantry: bool = Query(False, description="Include pantry-based recommendations"),
     pantry_ingredients: Optional[List[str]] = Query(None, description="List of available ingredients"),
-    use_rag: bool = Query(True, description="Use RAG-based recommendations (default, learns from feedback)"),
-    use_llm: bool = Query(False, description="Use legacy LLM-only curation"),
     db: Session = Depends(get_db)
 ):
     """
-    Get first 15 recommendations after onboarding
+    Get first 15 recommendations after onboarding using RAG.
 
-    **UPDATED**: Now uses RAG-based recommendations by default!
+    Features:
     - Learns from your likes, saves, and rejects
     - Won't repeat recipes within 7 days
     - Hybrid scoring: vector similarity + feedback + diversity
-
-    Strategy:
-    - Cards 1-5: High confidence matches (exploitation)
-    - Cards 6-8: Validated dimensions from taste profile
-    - Cards 9-11: Adjacent regions (exploration)
-    - Cards 12-13: Safe universals
-    - Cards 14-15: Pantry-based or weeknight-friendly
-
-    Expected >70% acceptance rate on first 5 cards
     """
-
     try:
-        # Try RAG first (default)
-        if use_rag:
-            try:
-                rag_service = RAGRecommendationsService(db)
-                result = rag_service.generate_recommendations(
-                    user_id=user_id,
-                    limit=15,
-                    include_pantry=include_pantry,
-                    pantry_ingredients=pantry_ingredients
-                )
-                return {
-                    'status': 'success',
-                    'method': 'rag_personalized',
-                    'total_recommendations': len(result.get('recommendations', [])),
-                    'recommendations': result.get('recommendations', []),
-                    'strategy_breakdown': {
-                        'cards_1_5': 'High confidence matches (vector + feedback)',
-                        'cards_6_8': 'Validated dimensions',
-                        'cards_9_11': 'Adjacent regions',
-                        'cards_12_13': 'Safe universals',
-                        'cards_14_15': 'Pantry or weeknight' if include_pantry else 'Weeknight-friendly'
-                    },
-                    'note': 'RAG-based recommendations - learns from your feedback'
-                }
-            except Exception as e:
-                print(f"RAG failed, falling back to LLM: {str(e)}")
-
-        # Fallback to LLM
-        if use_llm or not use_rag:
-            llm_service = LLMRecommendationsService(db)
-            recommendations = llm_service.generate_first_recommendations_with_llm(
-                user_id=user_id,
-                include_pantry=include_pantry,
-                pantry_ingredients=pantry_ingredients
-            )
-
-            return {
-                'status': 'success',
-                'method': 'llm_curated',
-                'total_recommendations': len(recommendations),
-                'recommendations': recommendations,
-                'strategy_breakdown': {
-                    'cards_1_5': 'High confidence matches (LLM-verified)',
-                    'cards_6_8': 'Validated dimensions',
-                    'cards_9_11': 'Adjacent regions',
-                    'cards_12_13': 'Safe universals',
-                    'cards_14_15': 'Pantry or weeknight' if include_pantry else 'Weeknight-friendly'
-                },
-                'note': 'Recommendations curated by Gemini AI'
-            }
+        rag_service = RAGRecommendationsService(db)
+        result = rag_service.generate_recommendations(
+            user_id=user_id,
+            limit=15,
+            include_pantry=include_pantry,
+            pantry_ingredients=pantry_ingredients
+        )
+        return {
+            'status': 'success',
+            'method': 'rag_personalized',
+            'total_recommendations': len(result.get('recommendations', [])),
+            'recommendations': result.get('recommendations', []),
+            'strategy_breakdown': {
+                'cards_1_5': 'High confidence matches (vector + feedback)',
+                'cards_6_8': 'Validated dimensions',
+                'cards_9_11': 'Adjacent regions',
+                'cards_12_13': 'Safe universals',
+                'cards_14_15': 'Pantry or weeknight' if include_pantry else 'Weeknight-friendly'
+            },
+            'note': 'RAG-based recommendations - learns from your feedback'
+        }
 
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error generating recommendations: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"RAG recommendation failed: {str(e)}")
 
 
 @router.get("/rag")
