@@ -12,6 +12,7 @@ from annapurna.models.recipe import Recipe
 from annapurna.utils.recommendation_engine import RecommendationEngine
 from annapurna.services.first_recommendations_service import FirstRecommendationsService
 from annapurna.services.llm_recommendations_service import LLMRecommendationsService
+from annapurna.services.rag_recommendations_service import RAGRecommendationsService
 
 router = APIRouter()
 
@@ -181,12 +182,17 @@ def get_next_meal_recommendations(
     meal_type: Optional[str] = Query(None, description="Override meal type: breakfast, lunch, snack, dinner (auto-detects if not provided)"),
     include_pantry: bool = Query(False, description="Include pantry-based recommendations"),
     pantry_ingredients: Optional[List[str]] = Query(None, description="List of available ingredients"),
+    use_rag: bool = Query(True, description="Use RAG-based recommendations (default, learns from feedback)"),
+    use_llm: bool = Query(False, description="Use legacy LLM-only curation (deprecated)"),
     db: Session = Depends(get_db)
 ):
     """
     Get time-aware recommendations for next meal
 
-    **NEW**: Auto-detects current meal based on time of day!
+    **UPDATED**: Now uses RAG-based recommendations by default!
+    - Learns from your likes, saves, and rejects
+    - Won't show recipes you rejected
+    - 7-day cooldown on previously shown recipes
 
     Time-based defaults:
     - 5am-11am: Breakfast
@@ -196,44 +202,81 @@ def get_next_meal_recommendations(
 
     Returns 5-10 highly relevant recipes specifically for the detected/specified meal.
     """
+    from datetime import datetime
 
-    try:
-        llm_service = LLMRecommendationsService(db)
-        recommendations = llm_service.generate_next_meal_recommendations(
-            user_id=user_id,
-            meal_type=meal_type,
-            include_pantry=include_pantry,
-            pantry_ingredients=pantry_ingredients
-        )
-
-        # Determine actual meal type used
-        from datetime import datetime
-        if meal_type is None:
-            current_hour = datetime.now().hour
-            if 5 <= current_hour < 11:
-                detected_meal = 'breakfast'
-            elif 11 <= current_hour < 16:
-                detected_meal = 'lunch'
-            elif 16 <= current_hour < 18:
-                detected_meal = 'snack'
-            else:
-                detected_meal = 'dinner'
+    # Determine meal type first
+    if meal_type is None:
+        current_hour = datetime.now().hour
+        if 5 <= current_hour < 11:
+            detected_meal = 'breakfast'
+        elif 11 <= current_hour < 16:
+            detected_meal = 'lunch'
+        elif 16 <= current_hour < 18:
+            detected_meal = 'snack'
         else:
-            detected_meal = meal_type
+            detected_meal = 'dinner'
+    else:
+        detected_meal = meal_type
 
-        return {
-            'status': 'success',
-            'meal_type': detected_meal,
-            'current_time': datetime.now().strftime('%I:%M %p'),
-            'total_recommendations': len(recommendations),
-            'recommendations': recommendations,
-            'note': f'Time-aware recommendations for {detected_meal} curated by Gemini AI'
-        }
+    method_used = 'rag_personalized'
+    recommendations = []
 
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error generating recommendations: {str(e)}")
+    # Try RAG first (default)
+    if use_rag:
+        try:
+            rag_service = RAGRecommendationsService(db)
+            result = rag_service.generate_recommendations(
+                user_id=user_id,
+                meal_type=detected_meal,
+                limit=10,
+                include_pantry=include_pantry,
+                pantry_ingredients=pantry_ingredients
+            )
+            recommendations = result.get('recommendations', [])
+            method_used = 'rag_personalized'
+        except Exception as e:
+            print(f"RAG recommendation failed, trying LLM fallback: {str(e)}")
+            use_rag = False
+
+    # Fallback to LLM if RAG fails
+    if not use_rag or len(recommendations) < 5:
+        if use_llm or not use_rag:
+            try:
+                llm_service = LLMRecommendationsService(db)
+                recommendations = llm_service.generate_next_meal_recommendations(
+                    user_id=user_id,
+                    meal_type=detected_meal,
+                    include_pantry=include_pantry,
+                    pantry_ingredients=pantry_ingredients
+                )
+                method_used = 'llm_curated'
+            except Exception as e:
+                print(f"LLM recommendation failed, trying vector-based: {str(e)}")
+
+    # Final fallback to vector-based
+    if len(recommendations) < 5:
+        method_used = 'vector_based'
+        try:
+            service = FirstRecommendationsService(db)
+            recommendations = service.generate_first_recommendations(
+                user_id=user_id,
+                include_pantry=include_pantry,
+                pantry_ingredients=pantry_ingredients
+            )
+        except Exception as e:
+            print(f"Vector-based fallback also failed: {str(e)}")
+            recommendations = []
+
+    return {
+        'status': 'success',
+        'meal_type': detected_meal,
+        'current_time': datetime.now().strftime('%I:%M %p'),
+        'total_recommendations': len(recommendations),
+        'recommendations': recommendations,
+        'method': method_used,
+        'note': f'Time-aware recommendations for {detected_meal}' +
+                (' - learns from your feedback' if method_used == 'rag_personalized' else '')
+    }
 
 
 @router.get("/first")
@@ -241,13 +284,17 @@ def get_first_recommendations(
     user_id: str,
     include_pantry: bool = Query(False, description="Include pantry-based recommendations"),
     pantry_ingredients: Optional[List[str]] = Query(None, description="List of available ingredients"),
-    use_llm: bool = Query(True, description="Use LLM-enhanced curation (recommended)"),
+    use_rag: bool = Query(True, description="Use RAG-based recommendations (default, learns from feedback)"),
+    use_llm: bool = Query(False, description="Use legacy LLM-only curation"),
     db: Session = Depends(get_db)
 ):
     """
-    Get first 15 recommendations after onboarding - LLM-curated strategic approach
+    Get first 15 recommendations after onboarding
 
-    **NEW**: Now uses Gemini LLM to intelligently curate recipes based on your complete taste profile!
+    **UPDATED**: Now uses RAG-based recommendations by default!
+    - Learns from your likes, saves, and rejects
+    - Won't repeat recipes within 7 days
+    - Hybrid scoring: vector similarity + feedback + diversity
 
     Strategy:
     - Cards 1-5: High confidence matches (exploitation)
@@ -260,8 +307,35 @@ def get_first_recommendations(
     """
 
     try:
-        if use_llm:
-            # Use NEW LLM-enhanced service
+        # Try RAG first (default)
+        if use_rag:
+            try:
+                rag_service = RAGRecommendationsService(db)
+                result = rag_service.generate_recommendations(
+                    user_id=user_id,
+                    limit=15,
+                    include_pantry=include_pantry,
+                    pantry_ingredients=pantry_ingredients
+                )
+                return {
+                    'status': 'success',
+                    'method': 'rag_personalized',
+                    'total_recommendations': len(result.get('recommendations', [])),
+                    'recommendations': result.get('recommendations', []),
+                    'strategy_breakdown': {
+                        'cards_1_5': 'High confidence matches (vector + feedback)',
+                        'cards_6_8': 'Validated dimensions',
+                        'cards_9_11': 'Adjacent regions',
+                        'cards_12_13': 'Safe universals',
+                        'cards_14_15': 'Pantry or weeknight' if include_pantry else 'Weeknight-friendly'
+                    },
+                    'note': 'RAG-based recommendations - learns from your feedback'
+                }
+            except Exception as e:
+                print(f"RAG failed, falling back to LLM: {str(e)}")
+
+        # Fallback to LLM
+        if use_llm or not use_rag:
             llm_service = LLMRecommendationsService(db)
             recommendations = llm_service.generate_first_recommendations_with_llm(
                 user_id=user_id,
@@ -281,35 +355,57 @@ def get_first_recommendations(
                     'cards_12_13': 'Safe universals',
                     'cards_14_15': 'Pantry or weeknight' if include_pantry else 'Weeknight-friendly'
                 },
-                'note': 'Recommendations curated by Gemini AI based on your complete taste profile'
-            }
-        else:
-            # Fallback to legacy service
-            service = FirstRecommendationsService(db)
-            recommendations = service.generate_first_recommendations(
-                user_id=user_id,
-                include_pantry=include_pantry,
-                pantry_ingredients=pantry_ingredients
-            )
-
-            return {
-                'status': 'success',
-                'method': 'vector_based',
-                'total_recommendations': len(recommendations),
-                'recommendations': recommendations,
-                'strategy_breakdown': {
-                    'cards_1_5': 'High confidence matches',
-                    'cards_6_8': 'Validated dimensions',
-                    'cards_9_11': 'Adjacent regions',
-                    'cards_12_13': 'Safe universals',
-                    'cards_14_15': 'Pantry or seasonal'
-                }
+                'note': 'Recommendations curated by Gemini AI'
             }
 
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error generating recommendations: {str(e)}")
+
+
+@router.get("/rag")
+def get_rag_recommendations(
+    user_id: str,
+    meal_type: Optional[str] = Query(None, description="Filter by meal type: breakfast, lunch, snack, dinner"),
+    limit: int = Query(15, ge=5, le=30, description="Number of recommendations"),
+    include_pantry: bool = Query(False, description="Boost recipes matching pantry ingredients"),
+    pantry_ingredients: Optional[List[str]] = Query(None, description="List of available ingredients"),
+    db: Session = Depends(get_db)
+):
+    """
+    RAG-based personalized recommendations with hybrid scoring.
+
+    **NEW**: Uses vector search + feedback learning + LLM re-ranking for
+    highly personalized recommendations that learn from your preferences.
+
+    Features:
+    - Semantic matching with your taste profile embedding
+    - Learns from likes, saves, and rejects (won't show rejected recipes)
+    - 7-day cooldown on shown recipes (variety guarantee)
+    - LLM generates personalized explanations
+
+    Scoring breakdown:
+    - 40% Vector similarity (taste profile match)
+    - 30% Feedback score (learns from your interactions)
+    - 20% Diversity score (avoid similar dishes)
+    - 10% Freshness score (boost new recipes)
+    """
+    try:
+        rag_service = RAGRecommendationsService(db)
+        result = rag_service.generate_recommendations(
+            user_id=user_id,
+            meal_type=meal_type,
+            limit=limit,
+            include_pantry=include_pantry,
+            pantry_ingredients=pantry_ingredients
+        )
+        return result
+
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error generating RAG recommendations: {str(e)}")
 
 
 @router.get("/complementary/{recipe_id}", response_model=List[ComplementaryDishResponse])

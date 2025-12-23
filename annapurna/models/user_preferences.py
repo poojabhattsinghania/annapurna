@@ -251,8 +251,10 @@ class UserSwipeHistory(Base):
     user_profile_id = Column(UUID(as_uuid=True), ForeignKey("user_profiles.id"), nullable=False, index=True)
     recipe_id = Column(UUID(as_uuid=True), ForeignKey("recipes.id"), nullable=False, index=True)
 
-    # Swipe action
-    swipe_action = Column(String(20), nullable=False)  # 'right' (like), 'left' (skip), 'long_press_left' (dislike)
+    # Swipe/feedback action - tracks user feedback on recipes
+    # 'right' = like, 'left' = skip, 'long_press_left' = reject (permanent exclusion)
+    # 'save' = save to collection, 'view' = opened recipe detail
+    swipe_action = Column(String(20), nullable=False)
 
     # Context
     context_type = Column(String(50), nullable=True)  # 'onboarding', 'daily_feed', 'search_results'

@@ -45,13 +45,155 @@ class RefineProfileRequest(BaseModel):
     lookback_days: int = Field(default=14, ge=1, le=90)
 
 
+class FeedbackRequest(BaseModel):
+    """Simple feedback from UI buttons (like/save/reject/view)"""
+    user_id: str
+    recipe_id: str
+    action: str = Field(..., pattern="^(like|save|reject|view)$")
+    context: str = Field(default='home_feed')  # 'home_feed', 'recipe_detail', 'search'
+
+
+@router.post("/feedback")
+def track_feedback(
+    request: FeedbackRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Track feedback from UI buttons (simpler interface for frontend)
+
+    Actions and their effects:
+    - 'like': Boost similar recipes (+0.2 signal)
+    - 'save': Save recipe for later (+0.15 signal)
+    - 'reject': Permanently exclude recipe (never show again)
+    - 'view': Weak positive signal (opened recipe detail)
+    """
+    from annapurna.models.user_preferences import UserProfile, UserSwipeHistory, RecipeRecommendation
+    import uuid
+    from datetime import datetime
+
+    # Map UI actions to internal swipe actions
+    ACTION_MAPPING = {
+        'like': 'right',
+        'save': 'save',
+        'reject': 'long_press_left',
+        'view': 'view'
+    }
+
+    try:
+        # Get user profile
+        profile = db.query(UserProfile).filter_by(user_id=request.user_id).first()
+        if not profile:
+            raise HTTPException(status_code=404, detail="User profile not found")
+
+        internal_action = ACTION_MAPPING[request.action]
+
+        # Create swipe history entry
+        swipe = UserSwipeHistory(
+            user_profile_id=profile.id,
+            recipe_id=uuid.UUID(request.recipe_id),
+            swipe_action=internal_action,
+            context_type=request.context,
+            swiped_at=datetime.utcnow()
+        )
+        db.add(swipe)
+
+        # For 'save' action, also update RecipeRecommendation if exists
+        if request.action == 'save':
+            rec = db.query(RecipeRecommendation).filter_by(
+                user_profile_id=profile.id,
+                recipe_id=uuid.UUID(request.recipe_id)
+            ).order_by(RecipeRecommendation.recommended_at.desc()).first()
+
+            if rec:
+                rec.was_saved = True
+
+        # For 'view' action, update was_viewed
+        if request.action == 'view':
+            rec = db.query(RecipeRecommendation).filter_by(
+                user_profile_id=profile.id,
+                recipe_id=uuid.UUID(request.recipe_id)
+            ).order_by(RecipeRecommendation.recommended_at.desc()).first()
+
+            if rec:
+                rec.was_viewed = True
+
+        db.commit()
+
+        # Response messages
+        MESSAGES = {
+            'like': 'Recipe liked! We\'ll show you more like this.',
+            'save': 'Recipe saved to your collection.',
+            'reject': 'Got it! You won\'t see this recipe again.',
+            'view': 'View tracked.'
+        }
+
+        return {
+            'status': 'success',
+            'message': MESSAGES[request.action],
+            'action': request.action,
+            'recipe_id': request.recipe_id,
+            'effect': {
+                'like': 'boost_similar',
+                'save': 'saved_and_boost',
+                'reject': 'permanently_excluded',
+                'view': 'weak_positive'
+            }[request.action]
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/saved/{user_id}")
+def get_saved_recipes(
+    user_id: str,
+    limit: int = 50,
+    db: Session = Depends(get_db)
+):
+    """Get user's saved recipes"""
+    from annapurna.models.user_preferences import UserProfile, UserSwipeHistory
+    from annapurna.models.recipe import Recipe
+
+    try:
+        profile = db.query(UserProfile).filter_by(user_id=user_id).first()
+        if not profile:
+            raise HTTPException(status_code=404, detail="User profile not found")
+
+        # Get saved recipes from swipe history
+        saved = db.query(UserSwipeHistory).filter(
+            UserSwipeHistory.user_profile_id == profile.id,
+            UserSwipeHistory.swipe_action == 'save'
+        ).order_by(UserSwipeHistory.swiped_at.desc()).limit(limit).all()
+
+        return {
+            'status': 'success',
+            'total_saved': len(saved),
+            'recipes': [
+                {
+                    'recipe_id': str(s.recipe_id),
+                    'recipe_title': s.recipe.title if s.recipe else None,
+                    'image_url': s.recipe.primary_image_url if s.recipe else None,
+                    'saved_at': s.swiped_at.isoformat()
+                }
+                for s in saved
+            ]
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @router.post("/swipe")
 def track_swipe(
     request: SwipeRequest,
     db: Session = Depends(get_db)
 ):
     """
-    Track swipe interaction
+    Track swipe interaction (legacy endpoint for swipe-based UI)
     Actions: 'right' (like), 'left' (skip), 'long_press_left' (strong dislike)
     """
     service = ProgressiveLearningService(db)
