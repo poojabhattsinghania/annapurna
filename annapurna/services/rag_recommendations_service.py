@@ -1,12 +1,20 @@
 """RAG-Based Recommendations Service - Vector search with hybrid scoring and LLM re-ranking"""
 
 import json
+import re
 import uuid
 from typing import Dict, List, Optional, Any, Set, Tuple
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, func
 import google.generativeai as genai
+
+
+def is_non_english_title(title: str) -> bool:
+    """Check if title contains non-Latin characters (Hindi, Kannada, Tamil, etc.)"""
+    # Match Devanagari (Hindi/Marathi), Kannada, Tamil, Telugu, Malayalam scripts
+    non_latin_pattern = re.compile(r'[\u0900-\u097F\u0C80-\u0CFF\u0B80-\u0BFF\u0C00-\u0C7F\u0D00-\u0D7F]')
+    return bool(non_latin_pattern.search(title or ''))
 
 from annapurna.config import settings
 from annapurna.models.user_preferences import (
@@ -245,6 +253,10 @@ class RAGRecommendationsService:
         """
         Check if recipe passes hard constraints (dietary, allergies, etc.)
         """
+        # Exclude non-English recipes (Hindi, Kannada, etc.)
+        if is_non_english_title(recipe.title):
+            return False
+
         title_lower = recipe.title.lower() if recipe.title else ""
 
         # Dietary type check (basic keyword check)
@@ -445,10 +457,10 @@ class RAGRecommendationsService:
 
     def _calculate_freshness_score(self, recipe: Recipe) -> float:
         """Boost newly added recipes (fresher = higher score)"""
-        if not recipe.created_at:
+        if not recipe.processed_at:
             return 0.5
 
-        age_days = (datetime.utcnow() - recipe.created_at).days
+        age_days = (datetime.utcnow() - recipe.processed_at).days
 
         if age_days < 7:
             return 1.0

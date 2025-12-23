@@ -62,11 +62,22 @@ class WhatsAppService:
         if recipe.ingredients:
             message_parts.append("*Ingredients:*")
             for ing in recipe.ingredients[:15]:  # Limit to 15 ingredients
-                name = ing.get('name', ing) if isinstance(ing, dict) else str(ing)
-                quantity = ing.get('quantity', '') if isinstance(ing, dict) else ''
-                unit = ing.get('unit', '') if isinstance(ing, dict) else ''
-                
-                ing_text = f"• {quantity} {unit} {name}".strip()
+                # Handle RecipeIngredient objects
+                if hasattr(ing, 'original_text') and ing.original_text:
+                    ing_text = f"• {ing.original_text}"
+                elif hasattr(ing, 'ingredient_name'):
+                    quantity = ing.quantity or ''
+                    unit = ing.unit or ''
+                    name = ing.ingredient_name or ''
+                    ing_text = f"• {quantity} {unit} {name}".strip()
+                elif isinstance(ing, dict):
+                    name = ing.get('name', '')
+                    quantity = ing.get('quantity', '')
+                    unit = ing.get('unit', '')
+                    ing_text = f"• {quantity} {unit} {name}".strip()
+                else:
+                    ing_text = f"• {str(ing)}"
+
                 ing_text = ' '.join(ing_text.split())  # Remove extra spaces
                 message_parts.append(ing_text)
 
@@ -79,7 +90,13 @@ class WhatsAppService:
         if recipe.steps:
             message_parts.append("*Instructions:*")
             for i, step in enumerate(recipe.steps[:10], 1):  # Limit to 10 steps
-                instruction = step.get('instruction', step) if isinstance(step, dict) else str(step)
+                # Handle RecipeStep objects
+                if hasattr(step, 'instruction'):
+                    instruction = step.instruction or ''
+                elif isinstance(step, dict):
+                    instruction = step.get('instruction', str(step))
+                else:
+                    instruction = str(step)
                 message_parts.append(f"{i}. {instruction}")
 
             if len(recipe.steps) > 10:

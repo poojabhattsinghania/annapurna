@@ -24,22 +24,19 @@ def get_recipe(
     if not recipe:
         raise HTTPException(status_code=404, detail="Recipe not found")
 
-    # Get ingredients
-    ingredients_data = db.query(RecipeIngredient, IngredientMaster).join(
-        IngredientMaster,
-        RecipeIngredient.ingredient_id == IngredientMaster.id
-    ).filter(
+    # Get ingredients (use LEFT OUTER JOIN since many don't have ingredient_id)
+    ingredients_data = db.query(RecipeIngredient).filter(
         RecipeIngredient.recipe_id == recipe_id
     ).all()
 
     ingredients = [
         IngredientResponse(
-            standard_name=ing_master.standard_name,
-            quantity=ing_rel.quantity,
-            unit=ing_rel.unit,
-            original_text=ing_rel.original_text
+            standard_name=ing.ingredient_name or ing.original_text or '',
+            quantity=ing.quantity,
+            unit=ing.unit,
+            original_text=ing.original_text or ''
         )
-        for ing_rel, ing_master in ingredients_data
+        for ing in ingredients_data
     ]
 
     # Get steps
@@ -79,10 +76,16 @@ def get_recipe(
         description=recipe.description,
         source_url=recipe.source_url,
         source_creator=recipe.creator.name if recipe.creator else "Unknown",
+        primary_image_url=recipe.primary_image_url,
+        thumbnail_url=recipe.thumbnail_url,
         prep_time_minutes=recipe.prep_time_minutes,
         cook_time_minutes=recipe.cook_time_minutes,
         total_time_minutes=recipe.total_time_minutes,
         servings=recipe.servings,
+        calories_per_serving=recipe.calories_per_serving,
+        protein_grams=recipe.protein_grams,
+        carbs_grams=recipe.carbs_grams,
+        fat_grams=recipe.fat_grams,
         ingredients=ingredients,
         steps=steps,
         tags=tags

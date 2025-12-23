@@ -41,10 +41,16 @@ class RecipeResponse(BaseModel):
     description: Optional[str]
     source_url: str
     source_creator: str
+    primary_image_url: Optional[str] = None
+    thumbnail_url: Optional[str] = None
     prep_time_minutes: Optional[int]
     cook_time_minutes: Optional[int]
     total_time_minutes: Optional[int]
     servings: Optional[int]
+    calories_per_serving: Optional[float] = None
+    protein_grams: Optional[float] = None
+    carbs_grams: Optional[float] = None
+    fat_grams: Optional[float] = None
     ingredients: List[IngredientResponse] = []
     steps: List[RecipeStepResponse] = []
     tags: List[RecipeTagResponse] = []

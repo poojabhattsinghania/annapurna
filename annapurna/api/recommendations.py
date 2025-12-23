@@ -201,10 +201,12 @@ def get_next_meal_recommendations(
     Returns 5-10 highly relevant recipes specifically for the detected/specified meal.
     """
     from datetime import datetime
+    from zoneinfo import ZoneInfo
 
-    # Determine meal type first
+    # Determine meal type first (using IST for India)
     if meal_type is None:
-        current_hour = datetime.now().hour
+        ist = ZoneInfo('Asia/Kolkata')
+        current_hour = datetime.now(ist).hour
         if 5 <= current_hour < 11:
             detected_meal = 'breakfast'
         elif 11 <= current_hour < 16:
@@ -227,10 +229,11 @@ def get_next_meal_recommendations(
         )
         recommendations = result.get('recommendations', [])
 
+        ist = ZoneInfo('Asia/Kolkata')
         return {
             'status': 'success',
             'meal_type': detected_meal,
-            'current_time': datetime.now().strftime('%I:%M %p'),
+            'current_time': datetime.now(ist).strftime('%I:%M %p'),
             'total_recommendations': len(recommendations),
             'recommendations': recommendations,
             'method': 'rag_personalized',

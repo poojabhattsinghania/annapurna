@@ -76,10 +76,17 @@ class TasteProfileUpdate(BaseModel):
     """Partial update to taste profile"""
     household_type: Optional[str] = None
     time_available_weekday: Optional[int] = None
+    diet_type: Optional[str] = None
     heat_level: Optional[int] = Field(None, ge=1, le=5)
     gravy_preferences: Optional[List[str]] = None
-    regional_influences: Optional[List[str]] = None
-    # ... other fields can be added as needed
+    primary_regional_influence: Optional[List[str]] = None
+    health_modifications: Optional[List[str]] = None
+    allium_status: Optional[str] = None
+    specific_prohibitions: Optional[List[str]] = None
+    cooking_fat: Optional[str] = None
+    primary_staple: Optional[str] = None
+    fat_richness: Optional[str] = None
+    sweetness_in_savory: Optional[str] = None
 
 
 class TasteProfileResponse(BaseModel):
