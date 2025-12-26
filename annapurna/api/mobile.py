@@ -47,6 +47,35 @@ class AudioTranscriptionResponse(BaseModel):
     transcript: str
 
 
+class CookingAssistantRequest(BaseModel):
+    """Request model for cooking assistant Q&A"""
+    recipe_title: str
+    recipe_steps: List[str]
+    current_step: int
+    question: str
+    language: str = "en"  # 'en' or 'hi'
+
+
+class CookingAssistantResponse(BaseModel):
+    """Response model for cooking assistant"""
+    answer: str
+    language: str
+
+
+class TranslateInstructionRequest(BaseModel):
+    """Request model for translating cooking instruction"""
+    instruction: str
+    step_number: int
+    target_language: str = "hi"  # 'hi' for Hindi
+
+
+class TranslateInstructionResponse(BaseModel):
+    """Response model for translated instruction"""
+    original: str
+    translated: str
+    language: str
+
+
 # ============================================================================
 # Helper Functions
 # ============================================================================
@@ -263,6 +292,170 @@ async def transcribe_audio(request: AudioTranscriptionRequest):
         raise HTTPException(
             status_code=500,
             detail=f"Audio transcription failed: {str(e)}"
+        )
+
+
+@router.post("/cooking-assistant", response_model=CookingAssistantResponse)
+async def cooking_assistant(request: CookingAssistantRequest):
+    """
+    AI cooking assistant for answering questions during cooking.
+
+    Provides contextual answers based on the current recipe and step.
+    Can answer in Hindi or English.
+
+    Args:
+        request: Recipe context, current step, question, and language preference
+
+    Returns:
+        AI-generated answer in the requested language
+    """
+    try:
+        # Build context from recipe
+        steps_context = "\n".join([
+            f"Step {i+1}: {step}"
+            for i, step in enumerate(request.recipe_steps)
+        ])
+
+        current_step_text = request.recipe_steps[request.current_step] if request.current_step < len(request.recipe_steps) else ""
+
+        language_instruction = ""
+        if request.language == "hi":
+            language_instruction = """
+            IMPORTANT: Respond in Hindi (Devanagari script).
+            Use simple, conversational Hindi that a home cook would understand.
+            Example: "हां, आप लहसुन की जगह अदरक डाल सकते हैं।"
+            """
+        else:
+            language_instruction = "Respond in simple, clear English."
+
+        prompt = f"""You are a helpful cooking assistant guiding someone through a recipe.
+
+Recipe: {request.recipe_title}
+
+All Steps:
+{steps_context}
+
+Current Step (Step {request.current_step + 1}): {current_step_text}
+
+User's Question: {request.question}
+
+{language_instruction}
+
+Provide a helpful, concise answer (2-3 sentences max). Focus on:
+- Answering the specific question
+- Practical cooking advice
+- Substitutions if asked
+- Timing or technique tips if relevant
+
+Answer:"""
+
+        model = genai.GenerativeModel('gemini-2.0-flash-exp')
+        response = model.generate_content(
+            prompt,
+            generation_config=genai.types.GenerationConfig(
+                temperature=0.7,
+                max_output_tokens=300,
+            )
+        )
+
+        answer = response.text if hasattr(response, 'text') else "Sorry, I couldn't process your question."
+
+        return CookingAssistantResponse(
+            answer=answer.strip(),
+            language=request.language
+        )
+
+    except Exception as e:
+        print(f"Cooking assistant error: {str(e)}")
+        error_msg = "माफ़ कीजिए, मुझे समझ नहीं आया।" if request.language == "hi" else "Sorry, I couldn't understand your question."
+        return CookingAssistantResponse(
+            answer=error_msg,
+            language=request.language
+        )
+
+
+# In-memory cache for translations (persists across requests)
+_translation_cache: dict[str, str] = {}
+
+def _get_cache_key(instruction: str, target_language: str) -> str:
+    """Generate cache key from instruction and language."""
+    import hashlib
+    text = f"{instruction.strip().lower()}:{target_language}"
+    return hashlib.md5(text.encode()).hexdigest()
+
+
+@router.post("/translate-instruction", response_model=TranslateInstructionResponse)
+async def translate_instruction(request: TranslateInstructionRequest):
+    """
+    Translate a cooking instruction to Hindi (or other language).
+
+    Uses Gemini to translate cooking instructions naturally.
+    Caches translations to avoid repeated API calls.
+
+    Args:
+        request: Original instruction, step number, and target language
+
+    Returns:
+        Original and translated instruction
+    """
+    try:
+        if request.target_language == "hi":
+            # Check cache first
+            cache_key = _get_cache_key(request.instruction, request.target_language)
+            if cache_key in _translation_cache:
+                print(f"[Translation] Cache HIT for step {request.step_number}")
+                return TranslateInstructionResponse(
+                    original=request.instruction,
+                    translated=_translation_cache[cache_key],
+                    language=request.target_language
+                )
+
+            print(f"[Translation] Cache MISS for step {request.step_number}, calling Gemini...")
+
+            prompt = f"""Translate this cooking instruction to Hindi (Devanagari script).
+Keep it natural and conversational, like how an Indian home cook would explain it.
+Don't translate ingredient names that are commonly used in English (like "paneer", "ghee").
+Do NOT include step numbers in your translation - just translate the instruction itself.
+
+Instruction: {request.instruction}
+
+Hindi Translation (just the instruction, no step number, no explanation):"""
+        else:
+            # Default: return as-is for English
+            return TranslateInstructionResponse(
+                original=request.instruction,
+                translated=request.instruction,
+                language="en"
+            )
+
+        model = genai.GenerativeModel('gemini-2.0-flash-exp')
+        response = model.generate_content(
+            prompt,
+            generation_config=genai.types.GenerationConfig(
+                temperature=0.3,
+                max_output_tokens=500,
+            )
+        )
+
+        translated = response.text if hasattr(response, 'text') else request.instruction
+        translated = translated.strip()
+
+        # Cache the translation
+        _translation_cache[cache_key] = translated
+        print(f"[Translation] Cached step {request.step_number}")
+
+        return TranslateInstructionResponse(
+            original=request.instruction,
+            translated=translated,
+            language=request.target_language
+        )
+
+    except Exception as e:
+        print(f"Translation error: {str(e)}")
+        return TranslateInstructionResponse(
+            original=request.instruction,
+            translated=request.instruction,
+            language="en"
         )
 
 
